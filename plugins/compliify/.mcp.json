@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "compliify": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/compliify.js", "mcp"],
+      "env": {
+        "COMPLIIFY_PROJECT_DIR": "${CLAUDE_PROJECT_DIR}"
+      }
+    }
+  }
+}

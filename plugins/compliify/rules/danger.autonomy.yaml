@@ -1,0 +1,23 @@
+# Autonomous behavior combined with significant effects on persons.
+id: danger.autonomy
+category: danger
+scope:
+  fact: behavior.autonomy
+  op: eq
+  value: autonomous
+when:
+  fact: context.decision_effect
+  op: in
+  value: [significant, legal_or_similar]
+then:
+  verdict: needs_review
+  severity: high
+action: warn
+because:
+  rationale: >-
+    The system acts autonomously and its outputs have significant or legally
+    relevant effects on the persons concerned. Decisions based solely on
+    automated processing that produce legal or similarly significant effects
+    are restricted and require safeguards such as meaningful human
+    intervention and the right to contest the decision.
+  citation: "DSGVO Art. 22"

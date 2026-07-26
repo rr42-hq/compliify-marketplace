@@ -1,0 +1,21 @@
+# Personal data with an unknown egress region: the Art. 30 record is incomplete.
+id: legal.pii-egress-unknown
+category: legal
+scope:
+  fact: data.categories
+  op: contains
+  value: personal
+when:
+  fact: data.egress_region
+  op: unknown
+then:
+  verdict: needs_review
+  severity: medium
+action: flag
+because:
+  rationale: >-
+    The system processes personal data but where that data ends up is unknown.
+    The record of processing activities must document transfers to third
+    countries; until the egress region is established, the record is
+    incomplete and third-country transfer obligations cannot be assessed.
+  citation: "DSGVO Art. 30(1)(e)"

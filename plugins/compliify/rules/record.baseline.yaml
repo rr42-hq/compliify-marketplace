@@ -1,0 +1,23 @@
+# Baseline record-keeping: every system processing personal data belongs in
+# the Art. 30 record of processing activities. `when: {all: []}` is the
+# always-true condition — this rule fires for every in-scope system and
+# provides the paper-trail finding that anchors the ROPA obligation.
+id: record.baseline
+category: legal
+scope:
+  fact: data.categories
+  op: contains
+  value: personal
+when:
+  all: []
+then:
+  verdict: needs_review
+  severity: low
+action: record
+because:
+  rationale: >-
+    The system processes personal data and must therefore be maintained in
+    the controller's record of processing activities. This finding records
+    the obligation; the generated Art. 30 document must be kept current and
+    open items in it resolved.
+  citation: "DSGVO Art. 30(1)"

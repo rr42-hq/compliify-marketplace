@@ -1,0 +1,7 @@
+{
+  "name": "compliify-plugin-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Runtime marker for the compliify plugin bundle: forces ESM parsing of dist/compliify.js and carries the rule-pack version."
+}

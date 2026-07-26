@@ -1,0 +1,13 @@
+{
+  "name": "compliify",
+  "owner": {
+    "name": "RR42"
+  },
+  "plugins": [
+    {
+      "name": "compliify",
+      "source": "./plugins/compliify",
+      "version": "0.1.0"
+    }
+  ]
+}
