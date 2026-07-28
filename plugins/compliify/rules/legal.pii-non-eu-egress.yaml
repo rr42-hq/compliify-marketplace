@@ -17,7 +17,7 @@ because:
   rationale: >-
     The system processes personal data and that data leaves the EU (e.g. via
     model API calls, storage, or telemetry). Transfers to third countries are
-    only lawful with a Chapter V transfer mechanism — an adequacy decision,
-    standard contractual clauses, or another Art. 46–49 safeguard — and the
+    only lawful with a Chapter V transfer mechanism - an adequacy decision,
+    standard contractual clauses, or another Art. 46–49 safeguard - and the
     transfer must be documented in the record of processing activities.
   citation: "DSGVO Art. 44–49"

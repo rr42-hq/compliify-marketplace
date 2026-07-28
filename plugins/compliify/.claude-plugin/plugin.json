@@ -1,7 +1,7 @@
 {
   "name": "compliify",
   "version": "0.1.0",
-  "description": "Governance facts at authoring time: captures typed, attributable compliance facts about AI systems while you code, evaluates them against a rule pack (observe mode — never blocks), and renders DSGVO Art. 30 records.",
+  "description": "Governance facts at authoring time: captures typed, attributable compliance facts about AI systems while you code, evaluates them against a rule pack (observe mode - never blocks), and renders DSGVO Art. 30 records.",
   "author": {
     "name": "Robin Jüngerich",
     "email": "robin.juengerich@icloud.com"

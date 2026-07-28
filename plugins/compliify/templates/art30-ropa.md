@@ -48,13 +48,13 @@
 - Menschliche Prüfung der Ausgaben (Human in the Loop): {{behavior.human_in_loop}}
 - Wirkung der Ausgaben für betroffene Personen: {{context.decision_effect}}
 
-## Anhang A — Faktenlage mit Herkunft
+## Anhang A - Faktenlage mit Herkunft
 
 Alle aktiven Fakten, aus denen dieses Dokument generiert wurde:
 
 {{#facts_table}}
 
-## Anhang B — Offene Punkte
+## Anhang B - Offene Punkte
 
 Die folgenden Angaben sind noch nicht bestätigt und im Review zu klären:
 

@@ -32298,7 +32298,7 @@ var CONDITION_OPS = [
 var factConditionSchema = external_exports.object({
   fact: external_exports.string().min(1),
   op: external_exports.enum(CONDITION_OPS),
-  // zod 4 treats plain z.unknown() props as required — value is op-dependent
+  // zod 4 treats plain z.unknown() props as required - value is op-dependent
   // and enforced by the superRefine below.
   value: external_exports.unknown().optional()
 }).strict().superRefine((cond, ctx) => {
@@ -32714,7 +32714,7 @@ function renderFactsTable(active) {
   ];
   for (const key of keys) {
     const fact = active.get(key);
-    lines.push(`| ${escapeCell(key)} | ${escapeCell(formatValue(fact.value))} | ${fact.provenance} | ${fact.confidence ?? "\u2014"} | ${escapeCell(fact.source ?? "\u2014")} |`);
+    lines.push(`| ${escapeCell(key)} | ${escapeCell(formatValue(fact.value))} | ${fact.provenance} | ${fact.confidence ?? "-"} | ${escapeCell(fact.source ?? "-")} |`);
   }
   return lines.join("\n");
 }
@@ -32868,7 +32868,7 @@ var registry2 = Object.assign(/* @__PURE__ */ Object.create(null), {
   "data.egress_region": {
     group: "data",
     description: "Region where processed data ends up (model API, storage, telemetry).",
-    question: "Which region does the data leave to (EU, US, other) \u2014 including model API calls?",
+    question: "Which region does the data leave to (EU, US, other) - including model API calls?",
     value: external_exports.enum(["eu", "us", "other", "unknown"])
   },
   "data.special_category": {
@@ -32921,7 +32921,7 @@ var registry2 = Object.assign(/* @__PURE__ */ Object.create(null), {
   "context.purpose": {
     group: "context",
     description: "Purpose of the processing (Art. 30(1)(b) DSGVO).",
-    question: "What is the purpose of this system \u2014 why does it process data?",
+    question: "What is the purpose of this system - why does it process data?",
     value: external_exports.string().min(1).max(300)
   },
   "context.domain": {
@@ -33044,7 +33044,7 @@ var FactProposalSchema = external_exports.object({
     key: external_exports.enum(FACT_KEYS),
     value: proposalValueSchema,
     // Extraction provenance only: "stated" is reserved for humans
-    // (MCP submit_fact), "unknown" is never proposed — omit instead.
+    // (MCP submit_fact), "unknown" is never proposed - omit instead.
     provenance: external_exports.enum(["detected", "inferred"]),
     // file:line citation. Facts without a source may not be proposed.
     source: external_exports.string().min(1).max(300),
@@ -33161,7 +33161,7 @@ function factsUsedLine(finding) {
 }
 function findingsText(result) {
   const lines = [];
-  lines.push("compliify check \u2014 observe mode (findings are informational, nothing is blocked)");
+  lines.push("compliify check - observe mode (findings are informational, nothing is blocked)");
   lines.push("");
   if (result.findings.length === 0) {
     lines.push("No findings.");
@@ -33170,7 +33170,7 @@ function findingsText(result) {
     lines.push("");
     for (const f of result.findings) {
       lines.push(
-        `[${f.severity}] ${f.rule_id} \u2014 ${f.action} (${f.verdict}, ${f.category})`
+        `[${f.severity}] ${f.rule_id} - ${f.action} (${f.verdict}, ${f.category})`
       );
       lines.push(`  ${f.because.rationale}`);
       lines.push(`  Citation: ${f.because.citation}`);
@@ -33207,7 +33207,7 @@ function findingsMarkdown(result) {
   }
   lines.push("");
   lines.push(
-    `_Observe mode \u2014 informational only. Rules: ${result.rules_evaluated} evaluated, ${result.rules_out_of_scope.length} out of scope, ${result.rules_skipped.length} skipped._`
+    `_Observe mode - informational only. Rules: ${result.rules_evaluated} evaluated, ${result.rules_out_of_scope.length} out of scope, ${result.rules_skipped.length} skipped._`
   );
   return lines.join("\n");
 }
@@ -33220,7 +33220,7 @@ function diffEmpty(diff) {
   return diff.added.length === 0 && diff.changed.length === 0 && diff.removed.length === 0 && diff.open_questions_added.length === 0 && diff.open_questions_resolved.length === 0;
 }
 function keysCell(keys) {
-  return keys.length === 0 ? "\u2014" : keys.map((k) => `\`${k}\``).join(", ");
+  return keys.length === 0 ? "-" : keys.map((k) => `\`${k}\``).join(", ");
 }
 function diffMarkdown(diff, refs) {
   const lines = [
@@ -33241,7 +33241,7 @@ function diffMarkdown(diff, refs) {
     );
   }
   lines.push("");
-  lines.push("_Observe mode \u2014 informational only, this never fails a build._");
+  lines.push("_Observe mode - informational only, this never fails a build._");
   return lines.join("\n");
 }
 function diffText(diff, refs) {
@@ -33355,7 +33355,7 @@ async function runInit(opts) {
   const lines = [];
   if (alreadyInitialised) {
     lines.push(
-      `compliify is already initialised here (system: ${existing.system || "unnamed"}) \u2014 leaving .compliify/facts.json untouched.`
+      `compliify is already initialised here (system: ${existing.system || "unnamed"}) - leaving .compliify/facts.json untouched.`
     );
   } else {
     await mkdir(paths.dir, { recursive: true });
@@ -33367,7 +33367,7 @@ async function runInit(opts) {
     );
     lines.push(`Initialised compliify for system "${slug}".`);
     lines.push(
-      "  created .compliify/facts.json (append-only governance facts \u2014 commit this file)"
+      "  created .compliify/facts.json (append-only governance facts - commit this file)"
     );
   }
   if (await ensureGitignoreEntry(root)) {
@@ -33376,7 +33376,7 @@ async function runInit(opts) {
   lines.push("");
   lines.push("Next steps:");
   lines.push("  compliify scan     # extract governance facts from the codebase (needs the claude CLI)");
-  lines.push("  compliify check    # evaluate the rule pack (observe mode \u2014 never blocks)");
+  lines.push("  compliify check    # evaluate the rule pack (observe mode - never blocks)");
   lines.push("  compliify report   # render the Art. 30 record of processing activities");
   lines.push("  Install the compliify Claude Code plugin to capture facts during coding sessions.");
   return lines.join("\n");
@@ -42993,7 +42993,7 @@ function buildMcpServer(repoDir) {
   server.registerTool(
     "get_open_questions",
     {
-      description: "List the open governance questions for this repository \u2014 registered fact keys with no confirmed fact yet. Ask the user at most two per session, then record answers with submit_fact."
+      description: "List the open governance questions for this repository - registered fact keys with no confirmed fact yet. Ask the user at most two per session, then record answers with submit_fact."
     },
     async () => {
       try {
@@ -43012,7 +43012,7 @@ function buildMcpServer(repoDir) {
   server.registerTool(
     "submit_fact",
     {
-      description: "Record a governance fact stated by the user (provenance: stated, status: confirmed, attributed to the git user.email). The key must be a registered fact key and the value must match its allowed values \u2014 use get_open_questions to see both.",
+      description: "Record a governance fact stated by the user (provenance: stated, status: confirmed, attributed to the git user.email). The key must be a registered fact key and the value must match its allowed values - use get_open_questions to see both.",
       inputSchema: {
         key: external_exports.string().min(1).describe("Registered fact key, e.g. data.egress_region"),
         value: external_exports.union([external_exports.string(), external_exports.array(external_exports.string())]).describe(
@@ -43060,16 +43060,16 @@ function buildMcpServer(repoDir) {
   server.registerTool(
     "get_policy",
     {
-      description: "Show the active compliify rule pack: every rule with its category, action, severity, and legal citation. Observe mode \u2014 rules warn or flag, they never block."
+      description: "Show the active compliify rule pack: every rule with its category, action, severity, and legal citation. Observe mode - rules warn or flag, they never block."
     },
     async () => {
       try {
         const rules = loadRulePack();
         const lines = [
-          `compliify rule pack v${VERSION} \u2014 observe mode (findings are informational, nothing is blocked).`,
+          `compliify rule pack v${VERSION} - observe mode (findings are informational, nothing is blocked).`,
           "",
           ...rules.map(
-            (r) => `- ${r.id} [${r.category}/${r.action}/${r.then.severity}]: ${r.because.rationale} \u2014 ${r.because.citation}`
+            (r) => `- ${r.id} [${r.category}/${r.action}/${r.then.severity}]: ${r.because.rationale} - ${r.because.citation}`
           )
         ];
         return text(lines.join("\n"));
@@ -43103,7 +43103,7 @@ function buildMcpServer(repoDir) {
           const reason = skipped ? `it was skipped (${skipped.reason})` : result.rules_out_of_scope.includes(ruleId) ? "its scope condition does not apply to this system" : "its trigger condition is not met by the current facts";
           return text(
             `Rule ${ruleId} did not produce a finding: ${reason}.
-Rule intent: ${rule.because.rationale} \u2014 ${rule.because.citation}`
+Rule intent: ${rule.because.rationale} - ${rule.because.citation}`
           );
         }
         const facts = finding.facts_used.length > 0 ? finding.facts_used.map(
@@ -43111,7 +43111,7 @@ Rule intent: ${rule.because.rationale} \u2014 ${rule.because.citation}`
         ).join("\n") : "- (no facts referenced)";
         return text(
           [
-            `Finding ${finding.rule_id} [${finding.severity}/${finding.action}] \u2014 ${finding.verdict} (${finding.category})`,
+            `Finding ${finding.rule_id} [${finding.severity}/${finding.action}] - ${finding.verdict} (${finding.category})`,
             "",
             finding.because.rationale,
             `Citation: ${finding.because.citation}`,
@@ -43361,7 +43361,7 @@ async function runScan(opts, runner = runClaude) {
   let current = before;
   if (files.length === 0) {
     lines.push(
-      "No governance-relevant files to scan \u2014 evaluating existing facts only."
+      "No governance-relevant files to scan - evaluating existing facts only."
     );
   } else {
     const proposal = await runExtraction(
@@ -43399,7 +43399,7 @@ async function runScan(opts, runner = runClaude) {
   if (format === "text" && open2.length > 0) {
     lines.push("");
     lines.push(
-      `${open2.length} open question(s) remain \u2014 answer them in a Claude Code session via the compliify MCP tool submit_fact.`
+      `${open2.length} open question(s) remain - answer them in a Claude Code session via the compliify MCP tool submit_fact.`
     );
   }
   return lines.join("\n");
@@ -43456,10 +43456,10 @@ function buildSessionStartContext(file2) {
   const open2 = computeOpenQuestions(file2, registry2);
   const lines = ["## compliify governance context", ""];
   lines.push(
-    file2.system !== "" ? `System: ${file2.system} (.compliify/facts.json)` : "System: not initialised yet \u2014 compliify records governance facts automatically at session end."
+    file2.system !== "" ? `System: ${file2.system} (.compliify/facts.json)` : "System: not initialised yet - compliify records governance facts automatically at session end."
   );
   lines.push(
-    "Policy: observe mode \u2014 compliify records governance facts and findings for this repo; it never blocks work."
+    "Policy: observe mode - compliify records governance facts and findings for this repo; it never blocks work."
   );
   lines.push("");
   if (active.length === 0) {
@@ -43479,12 +43479,12 @@ function buildSessionStartContext(file2) {
       `Open governance questions (${open2.length}${open2.length > shown.length ? `, showing ${shown.length}` : ""}):`
     );
     for (const key of shown) {
-      lines.push(`- ${key} \u2014 ${registry2[key]?.question ?? key}`);
+      lines.push(`- ${key} - ${registry2[key]?.question ?? key}`);
     }
     lines.push("");
   }
   lines.push(
-    "MCP: use the compliify tools \u2014 `get_open_questions` lists the agenda, `submit_fact` records an answer (stated + confirmed, attributed to the git user). Ask the user at most two questions per session, and only at a natural pause."
+    "MCP: use the compliify tools - `get_open_questions` lists the agenda, `submit_fact` records an answer (stated + confirmed, attributed to the git user). Ask the user at most two questions per session, and only at a natural pause."
   );
   return capText(lines.join("\n"), ADDITIONAL_CONTEXT_CAP);
 }
@@ -43530,10 +43530,10 @@ function buildStopContext(recorded, result, openQuestions) {
   );
   lines.push("");
   if (surfaced.length > 0) {
-    lines.push("Findings (observe mode \u2014 informational, nothing is blocked):");
+    lines.push("Findings (observe mode - informational, nothing is blocked):");
     for (const f of surfaced) {
       lines.push(
-        `- [${f.severity}] ${f.rule_id} (${f.action}): ${f.because.rationale} \u2014 ${f.because.citation}`
+        `- [${f.severity}] ${f.rule_id} (${f.action}): ${f.because.rationale} - ${f.because.citation}`
       );
     }
     lines.push("");
@@ -43542,7 +43542,7 @@ function buildStopContext(recorded, result, openQuestions) {
     const shown = openQuestions.slice(0, MAX_QUESTIONS_SURFACED);
     lines.push(`Open governance questions (${shown.length} of ${openQuestions.length}):`);
     for (const key of shown) {
-      lines.push(`- ${key} \u2014 ${registry2[key]?.question ?? key}`);
+      lines.push(`- ${key} - ${registry2[key]?.question ?? key}`);
     }
     lines.push("");
     lines.push(
@@ -43632,7 +43632,7 @@ async function operational(fn) {
 function buildProgram() {
   const program2 = new Command();
   program2.name("compliify").description(
-    "Governance facts, rules, and records for AI-generated apps (observe mode \u2014 never blocks)."
+    "Governance facts, rules, and records for AI-generated apps (observe mode - never blocks)."
   ).version("0.1.0");
   program2.command("init").description("Create .compliify/facts.json for this repository").option("--system <slug>", "system slug (default: repo directory name)").action(
     (opts) => operational(
@@ -43654,7 +43654,7 @@ function buildProgram() {
       })
     )
   );
-  program2.command("check").description("Evaluate the rule pack against current facts (observe mode \u2014 always exits 0)").option("--format <format>", "output format: text | json | markdown", "text").action(
+  program2.command("check").description("Evaluate the rule pack against current facts (observe mode - always exits 0)").option("--format <format>", "output format: text | json | markdown", "text").action(
     (opts) => operational(() => runCheck({ cwd: process.cwd(), format: opts.format }))
   );
   program2.command("report").description("Render the Art. 30 (DSGVO) record of processing activities").option("--out <path>", "write to a file instead of stdout").action(

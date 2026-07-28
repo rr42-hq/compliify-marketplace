@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // compliify PostToolUse hook (Write|Edit, async). Deliberately tiny and
-// node:fs-only — NO LLM, no deps, no imports beyond node builtins. Appends
+// node:fs-only - NO LLM, no deps, no imports beyond node builtins. Appends
 // the edited file path to .compliify/pending for the Stop hook to consume.
 // Never exits non-zero: a governance queue must never break an edit.
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
@@ -9,8 +9,8 @@ import { dirname, join } from "node:path";
 if (process.env.COMPLIIFY_EXTRACTION === "1") process.exit(0);
 
 // The Stop hook consumes the queue at the git toplevel (resolveRepoRoot in
-// the CLI). Anchor it the same way — nearest ancestor carrying a .git (repo
-// root; file for worktrees) or an existing .compliify — so a session running
+// the CLI). Anchor it the same way - nearest ancestor carrying a .git (repo
+// root; file for worktrees) or an existing .compliify - so a session running
 // in a subdirectory feeds the same .compliify/pending the Stop hook reads
 // instead of leaving a stray queue the Stop hook never finds. Fallback: the
 // cwd itself (matches resolveRepoRoot outside a git repo).
@@ -46,7 +46,7 @@ process.stdin.on("end", () => {
       appendFileSync(join(dir, "pending"), `${filePath}\n`, "utf8");
     }
   } catch {
-    // malformed payload / unwritable dir — swallow, this hook must be silent
+    // malformed payload / unwritable dir - swallow, this hook must be silent
   }
   process.exit(0);
 });
