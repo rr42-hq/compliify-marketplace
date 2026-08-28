@@ -68,6 +68,34 @@ open question a human answers later. Therefore:
 | The kind of output produced (text, decision, executed action) | `behavior.output_type` | `text` / `decision` / `action` / … |
 | README / package description of what the app does | `identity.description`, `context.purpose` | short free text |
 
+## Open questions
+
+Some governance-relevant keys cannot be answered from code at all (who is
+accountable, the legal basis, retention policy) or the code you saw is
+genuinely ambiguous. For such a key, emit an `open_questions` entry instead
+of a fact:
+
+- `key` - the registered fact key you could not determine.
+- `summary` - 1 to 3 sentences stating what the code DOES show and why the
+  key cannot be answered from it. Write it for a compliance reviewer who
+  has never seen the code: plain language, no jargon, no file-path soup.
+  Example: "The app stores user email addresses and names in the accounts
+  table, but nothing in the code says how long they are kept. Retention is
+  a policy decision the code does not record."
+- `evidence` - the 1 to 5 most relevant `file` (+ optional `line`) refs a
+  human reviewer should look at to answer the question themselves.
+
+Rules:
+
+- Emit **at most 5 open_questions entries per run**.
+- Only registered fact keys (the same registry table as facts).
+- **Never emit an entry for a key you proposed a fact for** in this run -
+  a key is either answered (fact) or open (question), never both.
+- Skip keys the current active facts already answer (confirmed facts).
+- An open question is a service to the human reviewer, not a dumping
+  ground: if you have nothing useful to say about what the code shows,
+  omit the entry - the key becomes a bare open question automatically.
+
 ## Method
 
 1. Read the changed files listed in the prompt (you have Read, Grep, and
@@ -75,5 +103,7 @@ open question a human answers later. Therefore:
 2. Follow imports/config only as far as needed to pin a value down.
 3. Compare candidates against the current active facts in the prompt; keep
    only new or contradicting facts.
-4. Emit the facts via the structured output schema. No prose, no summary -
-   the structured output is the entire result.
+4. For governance-relevant keys you could not pin down, add open_questions
+   entries per the rules above.
+5. Emit the facts and open questions via the structured output schema. No
+   prose, no summary - the structured output is the entire result.

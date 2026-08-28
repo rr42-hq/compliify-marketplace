@@ -32132,16 +32132,40 @@ var FactSchema = external_exports.object({
   at: external_exports.string().optional(),
   status: FactStatusSchema
 });
+var OpenQuestionEvidenceSchema = external_exports.object({
+  file: external_exports.string().min(1),
+  line: external_exports.number().int().positive().optional()
+});
+var OpenQuestionEntrySchema = external_exports.object({
+  key: external_exports.string().min(1),
+  summary: external_exports.string().optional(),
+  evidence: external_exports.array(OpenQuestionEvidenceSchema).optional()
+});
 var FactFileSchema = external_exports.object({
-  version: external_exports.literal(1),
+  version: external_exports.literal(2),
   // System slug. `compliify init` writes a proper slug; core keeps this
   // permissive (plain string) so fresh/empty files remain representable.
   system: external_exports.string(),
   facts: external_exports.array(FactSchema),
+  open_questions: external_exports.array(OpenQuestionEntrySchema)
+});
+var FactFileV1Schema = external_exports.object({
+  version: external_exports.literal(1),
+  system: external_exports.string(),
+  facts: external_exports.array(FactSchema),
   open_questions: external_exports.array(external_exports.string())
 });
+var FactFileReadSchema = external_exports.union([
+  FactFileSchema,
+  FactFileV1Schema.transform((v1) => ({
+    version: 2,
+    system: v1.system,
+    facts: v1.facts,
+    open_questions: v1.open_questions.map((key) => ({ key }))
+  }))
+]);
 function emptyFactFile(system = "") {
-  return { version: 1, system, facts: [], open_questions: [] };
+  return { version: 2, system, facts: [], open_questions: [] };
 }
 
 // packages/core/dist/lock.js
@@ -32432,7 +32456,7 @@ async function readFactFile(path2) {
   } catch (err) {
     throw new Error(`fact file ${path2} is not valid JSON: ${err.message}`);
   }
-  const parsed = FactFileSchema.safeParse(json2);
+  const parsed = FactFileReadSchema.safeParse(json2);
   if (!parsed.success) {
     throw new Error(`fact file ${path2} failed schema validation: ${parsed.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ")}`);
   }
@@ -32472,31 +32496,63 @@ async function writeFactsSuperseding(path2, incoming, opts = {}) {
         facts.push({ ...fact });
       }
       if (fact.status === "confirmed") {
-        openQuestions = openQuestions.filter((q) => q !== fact.key);
+        openQuestions = openQuestions.filter((q) => q.key !== fact.key);
       }
     }
     const updated = {
-      version: 1,
+      version: 2,
       system: current.system,
       facts,
       open_questions: openQuestions
     };
-    const parsed = FactFileSchema.safeParse(updated);
-    if (!parsed.success) {
-      throw new Error(`refusing to persist invalid fact file ${path2}: ${parsed.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ")}`);
-    }
-    const tmpPath = join(dirname(path2), `.facts-${randomBytes2(6).toString("hex")}.tmp`);
-    try {
-      await writeFile(tmpPath, `${JSON.stringify(updated, null, 2)}
+    await persistFactFile(path2, updated);
+    return updated;
+  });
+}
+async function persistFactFile(path2, file2) {
+  const parsed = FactFileSchema.safeParse(file2);
+  if (!parsed.success) {
+    throw new Error(`refusing to persist invalid fact file ${path2}: ${parsed.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ")}`);
+  }
+  const tmpPath = join(dirname(path2), `.facts-${randomBytes2(6).toString("hex")}.tmp`);
+  try {
+    await writeFile(tmpPath, `${JSON.stringify(file2, null, 2)}
 `, "utf8");
-      await rename(tmpPath, path2);
-    } catch (err) {
-      try {
-        await unlink2(tmpPath);
-      } catch {
-      }
-      throw err;
+    await rename(tmpPath, path2);
+  } catch (err) {
+    try {
+      await unlink2(tmpPath);
+    } catch {
     }
+    throw err;
+  }
+}
+function mergeOpenQuestionEntries(file2, incoming) {
+  const active = activeFacts(file2);
+  const answered = (key) => active.get(key)?.status === "confirmed";
+  const merged = /* @__PURE__ */ new Map();
+  for (const entry of file2.open_questions) {
+    merged.set(entry.key, entry);
+  }
+  for (const entry of incoming) {
+    merged.set(entry.key, { ...entry });
+  }
+  return [...merged.values()].filter((entry) => !answered(entry.key));
+}
+async function writeOpenQuestionsMerging(path2, incoming, opts = {}) {
+  const lockPath = `${path2}.lock`;
+  return withLock(lockPath, opts.lock ?? {}, async () => {
+    const current = await readFactFile(path2);
+    if (current.system === "" && opts.system !== void 0) {
+      current.system = opts.system;
+    }
+    const updated = {
+      version: 2,
+      system: current.system,
+      facts: current.facts,
+      open_questions: mergeOpenQuestionEntries(current, incoming)
+    };
+    await persistFactFile(path2, updated);
     return updated;
   });
 }
@@ -32506,6 +32562,14 @@ function computeOpenQuestions(file2, registry3) {
     const fact = active.get(key);
     return fact === void 0 || fact.status !== "confirmed";
   }).sort();
+}
+function openQuestionEntries(file2, registry3) {
+  const active = activeFacts(file2);
+  const answered = (key) => active.get(key)?.status === "confirmed";
+  const stored = file2.open_questions.filter((entry) => !answered(entry.key));
+  const storedKeys = new Set(stored.map((entry) => entry.key));
+  const derived = computeOpenQuestions(file2, registry3).filter((key) => !storedKeys.has(key)).map((key) => ({ key }));
+  return [...stored, ...derived];
 }
 
 // packages/core/dist/engine.js
@@ -32784,8 +32848,8 @@ function diffFactFiles(before, after) {
     if (!afterActive.has(key))
       removed.push(key);
   }
-  const beforeQuestions = new Set(before.open_questions);
-  const afterQuestions = new Set(after.open_questions);
+  const beforeQuestions = new Set(before.open_questions.map((q) => q.key));
+  const afterQuestions = new Set(after.open_questions.map((q) => q.key));
   const openQuestionsAdded = [...afterQuestions].filter((q) => !beforeQuestions.has(q));
   const openQuestionsResolved = [...beforeQuestions].filter((q) => !afterQuestions.has(q));
   return {
@@ -33049,7 +33113,20 @@ var FactProposalSchema = external_exports.object({
     // file:line citation. Facts without a source may not be proposed.
     source: external_exports.string().min(1).max(300),
     confidence: external_exports.enum(["high", "medium", "low"])
-  }).strict()).max(FACT_KEYS.length)
+  }).strict()).max(FACT_KEYS.length),
+  // Rich open questions: registered keys the extraction could NOT answer
+  // from code, each with a reviewer-facing summary of what the code does
+  // show and the file:line refs a human should look at. The extraction
+  // session is the only place with code access - the server never sees
+  // source, so this is where summaries/evidence must originate.
+  open_questions: external_exports.array(external_exports.object({
+    key: external_exports.enum(FACT_KEYS),
+    summary: external_exports.string().min(20).max(400),
+    evidence: external_exports.array(external_exports.object({
+      file: external_exports.string().min(1).max(300),
+      line: external_exports.number().int().positive().optional()
+    }).strict()).min(1).max(5)
+  }).strict()).max(5).optional()
 }).strict();
 var factFileJsonSchema = external_exports.toJSONSchema(FactFileSchema);
 var factProposalJsonSchema = external_exports.toJSONSchema(FactProposalSchema);
@@ -33147,6 +33224,21 @@ var TRUNCATION_MARKER = "\n\u2026[truncated]";
 function capText(text2, max) {
   if (text2.length <= max) return text2;
   return text2.slice(0, max - TRUNCATION_MARKER.length) + TRUNCATION_MARKER;
+}
+function formatEvidenceRef(ref) {
+  return ref.line !== void 0 ? `${ref.file}:${ref.line}` : ref.file;
+}
+function openQuestionLines(entry, question) {
+  const lines = [`- ${entry.key} - ${question}`];
+  if (entry.summary !== void 0 && entry.summary !== "") {
+    lines.push(`  ${entry.summary}`);
+  }
+  if (entry.evidence !== void 0 && entry.evidence.length > 0) {
+    lines.push(
+      `  Evidence: ${entry.evidence.map((e) => formatEvidenceRef(e)).join(", ")}`
+    );
+  }
+  return lines;
 }
 function formatValue2(value) {
   if (typeof value === "string") return value;
@@ -33304,7 +33396,7 @@ function factFileAtRef(root, ref) {
   } catch {
     return emptyFactFile();
   }
-  const parsed = FactFileSchema.safeParse(JSON.parse(raw));
+  const parsed = FactFileReadSchema.safeParse(JSON.parse(raw));
   if (!parsed.success) {
     throw new Error(
       `fact file at ${ref}:${FACTS_REPO_PATH} failed schema validation: ${parsed.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ")}`
@@ -42998,10 +43090,14 @@ function buildMcpServer(repoDir) {
     async () => {
       try {
         const file2 = await readFactFile(paths.factsPath);
-        const open2 = computeOpenQuestions(file2, registry2).map((key) => ({
-          key,
-          question: registry2[key]?.question ?? key,
-          allowed_values: registry2[key] ? describeValueSchema(registry2[key].value) : "unknown key"
+        const open2 = openQuestionEntries(file2, registry2).map((entry) => ({
+          key: entry.key,
+          question: registry2[entry.key]?.question ?? entry.key,
+          allowed_values: registry2[entry.key] ? describeValueSchema(registry2[entry.key].value) : "unknown key",
+          // What the extraction session saw in the code (null when the key
+          // is merely missing a confirmed fact).
+          summary: entry.summary ?? null,
+          evidence: entry.evidence ?? null
         }));
         return text(JSON.stringify({ open_questions: open2 }, null, 2));
       } catch (err) {
@@ -43155,6 +43251,10 @@ import { mkdir as mkdir3 } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 var execFileAsync = promisify(execFile);
+function stripSchemaDialect(schema) {
+  const { $schema: _dialect, $id: _id, ...rest } = schema;
+  return rest;
+}
 function claudeArgs(opts) {
   const model = opts.model ?? process.env["COMPLIIFY_MODEL"] ?? "sonnet";
   const args = [
@@ -43163,7 +43263,7 @@ function claudeArgs(opts) {
     "--output-format",
     "json",
     "--json-schema",
-    JSON.stringify(opts.schema),
+    JSON.stringify(stripSchemaDialect(opts.schema)),
     "--model",
     model,
     "--allowedTools",
@@ -43190,12 +43290,22 @@ var runClaude = async (opts) => {
   const isScript = /\.(mjs|cjs|js)$/.test(bin);
   const file2 = isScript ? process.execPath : bin;
   const finalArgs = isScript ? [bin, ...args] : args;
-  const { stdout } = await execFileAsync(file2, finalArgs, {
+  const options = {
     cwd: opts.cwd,
     env: { ...process.env, COMPLIIFY_EXTRACTION: "1" },
     maxBuffer: 64 * 1024 * 1024,
-    timeout: opts.timeoutMs ?? 15e4
-  });
+    timeout: opts.timeoutMs ?? 15e4,
+    // The prompt is passed via -p; without this the CLI waits ~3s for stdin
+    // that never arrives and prints a warning on every extraction. execFile
+    // forwards `stdio` to spawn at runtime, but @types/node's
+    // ExecFileOptions omits it - hence the cast. DO NOT remove the ignore.
+    stdio: ["ignore", "pipe", "pipe"]
+  };
+  const { stdout } = await execFileAsync(
+    file2,
+    finalArgs,
+    options
+  );
   let parsed;
   try {
     parsed = JSON.parse(stdout);
@@ -43281,7 +43391,9 @@ function buildExtractionPrompt(input) {
     "Paths are relative to the repository root (your working directory).",
     "Examine these files with Read/Grep/Glob, then emit ONLY the structured",
     "output described by the schema. Propose at most 10 facts; omit anything",
-    "you cannot cite."
+    "you cannot cite. For governance-relevant keys you cannot answer from",
+    "the code, emit at most 5 open_questions entries (summary + evidence)",
+    "per the skill's Open questions section."
   ].join("\n");
 }
 async function runExtraction(input, runner = runClaude) {
@@ -43315,6 +43427,31 @@ function proposalsToFacts(proposal, meta3) {
     at: meta3.at,
     status: "proposed"
   }));
+}
+function filterProposedOpenQuestions(file2, proposal, registryKeys) {
+  const active = activeFacts(file2);
+  const registered = new Set(registryKeys);
+  const entries = [];
+  const dropped = [];
+  for (const q of proposal.open_questions ?? []) {
+    if (!registered.has(q.key)) {
+      dropped.push({ key: q.key, reason: "unregistered fact key" });
+      continue;
+    }
+    if (active.get(q.key)?.status === "confirmed") {
+      dropped.push({ key: q.key, reason: "already answered by a confirmed fact" });
+      continue;
+    }
+    entries.push({
+      key: q.key,
+      summary: q.summary,
+      evidence: q.evidence.map((e) => ({
+        file: e.file,
+        ...e.line !== void 0 ? { line: e.line } : {}
+      }))
+    });
+  }
+  return { entries, dropped };
 }
 function filterNovelFacts(file2, incoming) {
   const active = activeFacts(file2);
@@ -43379,17 +43516,35 @@ async function runScan(opts, runner = runClaude) {
     });
     const { valid, rejected } = validateFacts(envelopes, registry2);
     const novel = filterNovelFacts(before, valid);
+    const system = before.system !== "" ? before.system : systemSlugFor(root);
     if (novel.length > 0) {
       await mkdir3(paths.dir, { recursive: true });
-      current = await writeFactsSuperseding(paths.factsPath, novel, {
-        system: before.system !== "" ? before.system : systemSlugFor(root)
-      });
+      current = await writeFactsSuperseding(paths.factsPath, novel, { system });
     }
     lines.push(
       `Scanned ${files.length} file(s): ${novel.length} fact(s) recorded (${valid.length - novel.length} already known, ${rejected.length} rejected).`
     );
     for (const r of rejected) {
       lines.push(`  rejected: ${r.error}`);
+    }
+    const questions = filterProposedOpenQuestions(
+      current,
+      proposal,
+      Object.keys(registry2)
+    );
+    if (questions.entries.length > 0) {
+      await mkdir3(paths.dir, { recursive: true });
+      current = await writeOpenQuestionsMerging(
+        paths.factsPath,
+        questions.entries,
+        { system }
+      );
+      lines.push(
+        `Captured ${questions.entries.length} open question(s) with summary/evidence.`
+      );
+    }
+    for (const d of questions.dropped) {
+      lines.push(`  dropped open question: ${d.key} (${d.reason})`);
     }
   }
   const result = evaluate(current, loadRulePack(), registry2);
@@ -43453,7 +43608,7 @@ function buildSessionStartContext(file2) {
   const active = [...activeFacts(file2).values()].sort(
     (a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0
   );
-  const open2 = computeOpenQuestions(file2, registry2);
+  const open2 = openQuestionEntries(file2, registry2);
   const lines = ["## compliify governance context", ""];
   lines.push(
     file2.system !== "" ? `System: ${file2.system} (.compliify/facts.json)` : "System: not initialised yet - compliify records governance facts automatically at session end."
@@ -43478,8 +43633,10 @@ function buildSessionStartContext(file2) {
     lines.push(
       `Open governance questions (${open2.length}${open2.length > shown.length ? `, showing ${shown.length}` : ""}):`
     );
-    for (const key of shown) {
-      lines.push(`- ${key} - ${registry2[key]?.question ?? key}`);
+    for (const entry of shown) {
+      lines.push(
+        ...openQuestionLines(entry, registry2[entry.key]?.question ?? entry.key)
+      );
     }
     lines.push("");
   }
@@ -43541,8 +43698,10 @@ function buildStopContext(recorded, result, openQuestions) {
   if (openQuestions.length > 0) {
     const shown = openQuestions.slice(0, MAX_QUESTIONS_SURFACED);
     lines.push(`Open governance questions (${shown.length} of ${openQuestions.length}):`);
-    for (const key of shown) {
-      lines.push(`- ${key} - ${registry2[key]?.question ?? key}`);
+    for (const entry of shown) {
+      lines.push(
+        ...openQuestionLines(entry, registry2[entry.key]?.question ?? entry.key)
+      );
     }
     lines.push("");
     lines.push(
@@ -43581,15 +43740,33 @@ async function runStopHook(payload, runner = runClaude) {
     );
   }
   const novel = filterNovelFacts(before, valid);
+  const system = before.system !== "" ? before.system : systemSlugFor(root);
   if (novel.length > 0) {
     await mkdir4(paths.dir, { recursive: true });
   }
-  const updated = novel.length > 0 ? await writeFactsSuperseding(paths.factsPath, novel, {
-    system: before.system !== "" ? before.system : systemSlugFor(root)
-  }) : before;
+  let updated = novel.length > 0 ? await writeFactsSuperseding(paths.factsPath, novel, { system }) : before;
+  const proposedQuestions = filterProposedOpenQuestions(
+    updated,
+    proposal,
+    Object.keys(registry2)
+  );
+  if (proposedQuestions.dropped.length > 0) {
+    process.stderr.write(
+      `compliify: dropped ${proposedQuestions.dropped.length} open question(s): ${proposedQuestions.dropped.map((d) => `${d.key} (${d.reason})`).join("; ")}
+`
+    );
+  }
+  if (proposedQuestions.entries.length > 0) {
+    await mkdir4(paths.dir, { recursive: true });
+    updated = await writeOpenQuestionsMerging(
+      paths.factsPath,
+      proposedQuestions.entries,
+      { system }
+    );
+  }
   const result = evaluate(updated, loadRulePack(), registry2);
   const surfaced = result.findings.filter((f) => f.action !== "record");
-  const openQuestions = computeOpenQuestions(updated, registry2);
+  const openQuestions = openQuestionEntries(updated, registry2);
   const systemMessage = `compliify: ${novel.length} fact(s) recorded, ${surfaced.length} finding(s), ${openQuestions.length} open question(s)`;
   return JSON.stringify({
     suppressOutput: true,
