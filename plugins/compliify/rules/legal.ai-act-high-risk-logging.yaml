@@ -1,0 +1,29 @@
+# A high-risk system without confirmed event logging.
+id: legal.ai-act-high-risk-logging
+category: legal
+scope:
+  fact: context.ai_act_risk
+  op: eq
+  value: high
+when:
+  any:
+    - fact: controls.logging
+      op: eq
+      value: none
+    - fact: controls.logging
+      op: unknown
+then:
+  verdict: needs_review
+  severity: medium
+action: warn
+because:
+  headline: "A high-risk system without confirmed event logging"
+  rationale: >-
+    The system is classified as high-risk, and high-risk systems must
+    technically allow the automatic recording of events (logs) over their
+    lifetime. The recorded facts say the system keeps no logs, or that its
+    logging has not been established. Record what is logged, or correct the
+    facts if logging exists.
+  citation: "EU AI Act (Regulation (EU) 2024/1689) Art. 12"
+  remedy: >-
+    Record what the system logs and for how long - or correct the facts if logging already exists.

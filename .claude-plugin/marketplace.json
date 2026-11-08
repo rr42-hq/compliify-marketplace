@@ -7,7 +7,22 @@
     {
       "name": "compliify",
       "source": "./plugins/compliify",
-      "version": "0.1.0"
+      "version": "0.3.0",
+      "relevance": {
+        "topic": "AI governance",
+        "signals": {
+          "manifestDeps": [
+            {
+              "file": "[/\\\\]package\\.json$",
+              "pattern": "\"(@anthropic-ai/sdk|openai|@google/genai|@mistralai/mistralai|langchain|ai)\"\\s*:"
+            },
+            {
+              "file": "[/\\\\](requirements[^/\\\\]*\\.txt|pyproject\\.toml)$",
+              "pattern": "(anthropic|openai|google-genai|mistralai|langchain)"
+            }
+          ]
+        }
+      }
     }
   ]
 }

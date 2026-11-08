@@ -15,9 +15,12 @@ then:
   severity: low
 action: record
 because:
+  headline: "This system belongs in your record of processing"
   rationale: >-
     The system processes personal data and must therefore be maintained in
     the controller's record of processing activities. This finding records
     the obligation; the generated Art. 30 document must be kept current and
     open items in it resolved.
   citation: "DSGVO Art. 30(1)"
+  remedy: >-
+    Keep the Art. 30 record up to date and resolve the open items in it.

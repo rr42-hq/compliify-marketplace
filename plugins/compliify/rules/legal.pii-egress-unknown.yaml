@@ -13,9 +13,15 @@ then:
   severity: medium
 action: flag
 because:
+  headline: "We do not know where the personal data ends up"
   rationale: >-
     The system processes personal data but where that data ends up is unknown.
     The record of processing activities must document transfers to third
     countries; until the egress region is established, the record is
     incomplete and third-country transfer obligations cannot be assessed.
+    If the code scan has recorded the architecture, `compliify diagram
+    --format text` (or the Architecture tab) lists the data flows that leave
+    for external services and AI models, and whose region is still unknown.
   citation: "DSGVO Art. 30(1)(e)"
+  remedy: >-
+    Find out where the data ends up (model API, storage, logs) and record the region; the vendor's data-processing terms usually say.

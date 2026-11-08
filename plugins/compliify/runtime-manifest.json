@@ -1,0 +1,75 @@
+{
+  "version": "0.3.0",
+  "files": [
+    {
+      "path": "dist/compliify.js",
+      "sha256": "83adc13a4e8f99c1aa0fdc7c62dfdb84827a6a1d3005b4467a98793f4fc3584c",
+      "size": 1793366
+    },
+    {
+      "path": "package.json",
+      "sha256": "3244d82c64736f33b235861b4d969d9c956bbb65b88b62841e30dc5da8167cc3",
+      "size": 245
+    },
+    {
+      "path": "rules/corporate.secrets.yaml",
+      "sha256": "a65ce2ae3d0f1d02d69bad5d78ab90ad39dba4d56417c7005a19d180440ac466",
+      "size": 807
+    },
+    {
+      "path": "rules/danger.autonomy.yaml",
+      "sha256": "5824d0741f57bf3a732c445a3f26da2a5bbb561f6e6affc3025c85e219f134b0",
+      "size": 956
+    },
+    {
+      "path": "rules/legal.ai-act-high-risk-logging.yaml",
+      "sha256": "efc884c3b5bf77808afc736fe45798f3c9e7271de2c004643157ca1bd24230fb",
+      "size": 931
+    },
+    {
+      "path": "rules/legal.ai-act-high-risk-oversight.yaml",
+      "sha256": "327c51c75f216e6046b49026d209404e73b25c17e6ae31eeb1c4cee8e614d235",
+      "size": 1005
+    },
+    {
+      "path": "rules/legal.ai-act-prohibited.yaml",
+      "sha256": "707db49ba01b7ea3097dda317ccf1f4fa19dc36b8e5751539565212bb08125d9",
+      "size": 829
+    },
+    {
+      "path": "rules/legal.ai-act-risk-unclassified.yaml",
+      "sha256": "c0267f4ce5d4e5b0033500f7871bd5673054f0f9b15011972036a32545d299b5",
+      "size": 996
+    },
+    {
+      "path": "rules/legal.pii-egress-unknown.yaml",
+      "sha256": "4196faf76008209623567945ef0ca55650b0c57cce91e63ddccb1005c4882d1e",
+      "size": 1085
+    },
+    {
+      "path": "rules/legal.pii-non-eu-egress.yaml",
+      "sha256": "e6a08a1fcbedc8ade8ff4d291c6b36f2f660495d32949156097eb79e531c9289",
+      "size": 960
+    },
+    {
+      "path": "rules/record.baseline.yaml",
+      "sha256": "8b86a5ef57d4cef3a867787ccc44d959d65489c927e8a838d8e404e764530277",
+      "size": 928
+    },
+    {
+      "path": "skills/extract-facts/SKILL.md",
+      "sha256": "bed3b4b3f94a2f35d319c983f22bfbabbaf4010098eaa66b8b59ba6e05da2780",
+      "size": 32204
+    },
+    {
+      "path": "templates/art30-ropa.en.md",
+      "sha256": "49ac4d55a73e19892bb7ef5e3940d78c4e06428598983629684a6379eab2cf44",
+      "size": 2235
+    },
+    {
+      "path": "templates/art30-ropa.md",
+      "sha256": "c60de32e9228ba4272f72b964317d3bdd0ac80281029fadd74570ecaeaa8cf71",
+      "size": 2464
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+# The system has been classified as a prohibited AI practice.
+id: legal.ai-act-prohibited
+category: legal
+scope:
+  fact: context.ai_act_risk
+  op: eq
+  value: prohibited
+when:
+  all: []
+then:
+  verdict: non_compliant
+  severity: high
+action: warn
+because:
+  headline: "The system is classed as a prohibited AI practice"
+  rationale: >-
+    The system has been classified as a prohibited AI practice. Placing such
+    a system on the market, putting it into service or using it is not
+    permitted. Either the classification is wrong and should be corrected, or
+    the system must not be operated in this form.
+  citation: "EU AI Act (Regulation (EU) 2024/1689) Art. 5"
+  remedy: >-
+    Check the classification. If it is right, the system must not be operated in this form; if it is wrong, correct the risk tier in the record.

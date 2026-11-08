@@ -1,0 +1,25 @@
+# The EU AI Act risk tier of the system has not been established.
+id: legal.ai-act-risk-unclassified
+category: legal
+scope:
+  fact: model.provider
+  op: exists
+when:
+  fact: context.ai_act_risk
+  op: unknown
+then:
+  verdict: needs_review
+  severity: low
+action: flag
+because:
+  headline: "The EU AI Act risk tier is not decided yet"
+  rationale: >-
+    The system uses an AI model but its risk tier under the EU AI Act has not
+    been established. Which obligations apply - none beyond voluntary
+    practices, transparency duties, the high-risk requirements, or a
+    prohibition - depends on that classification, and it is a legal judgement
+    a person makes and records; it cannot be read from the code. Until it is
+    stated, the later AI Act checks cannot run for this system.
+  citation: "EU AI Act (Regulation (EU) 2024/1689) Art. 5, 6, 50 and Annex III"
+  remedy: >-
+    Decide the tier (prohibited, high-risk, limited or minimal) and record it - the later AI Act checks depend on it.

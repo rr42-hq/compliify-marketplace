@@ -14,6 +14,7 @@ then:
   severity: high
 action: warn
 because:
+  headline: "Personal data leaves the EU"
   rationale: >-
     The system processes personal data and that data leaves the EU (e.g. via
     model API calls, storage, or telemetry). Transfers to third countries are
@@ -21,3 +22,5 @@ because:
     standard contractual clauses, or another Art. 46–49 safeguard - and the
     transfer must be documented in the record of processing activities.
   citation: "DSGVO Art. 44–49"
+  remedy: >-
+    Put a transfer mechanism in place with the vendor (standard contractual clauses or an adequacy decision) and note it in the record, or switch to an EU region.

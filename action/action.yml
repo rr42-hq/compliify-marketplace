@@ -1,0 +1,425 @@
+# compliify composite action for USER repos. Observe mode by default - it
+# NEVER fails the build: every step is continue-on-error and exits 0. The one
+# opt-in exception is `enforce: "true"`, which adds a final step that fails the
+# job when a rule listed under "enforce" in .compliify/config.json has a
+# finding (see the `enforce` input).
+#
+# Where to use it from:
+#   rr42-hq/compliify-marketplace/action@v0   the public marketplace repo; no
+#                                             organization setting is needed
+#   rr42-hq/compliify/action@main             the private monorepo; the caller
+#                                             must be allowed under Settings ->
+#                                             Actions -> General -> Access
+#
+# The compliify CLI is not on npm. The action downloads the prebuilt plugin
+# runtime (dist/compliify.js plus package.json, rules/, templates/ and the
+# extraction skill) from the public rr42-hq/compliify-marketplace repo and
+# verifies it against runtime-manifest.json (sha256 and size of every file).
+# The logic lives in scripts/*.mjs next to this file (tested, no inline
+# heredocs); the steps below only wire them together.
+#
+# Caller prerequisites:
+#   - actions/checkout has already run, ideally with fetch-depth: 0 (the
+#     governance diff needs the merge-base commit).
+#   - Node.js >= 20 on the runner (preinstalled on GitHub-hosted runners).
+#   - permissions: contents: read, pull-requests: write (for the comment).
+#   - The pull_request event. (Do not use pull_request_target: it would run
+#     this action on untrusted code with secrets.)
+#
+# Never silent: every step reports into outputs and the last step (always
+# runs) turns them into a job summary and, on pull requests, the sticky
+# comment. If something prevented a normal run, the comment starts with
+# "compliify did not run completely: <reason>". On a pull request from a
+# fork GITHUB_TOKEN is read-only and secrets are not available; the result
+# then stays in the job summary.
+#
+# Tokens are spent in the client, not here. Without an anthropic_api_key this
+# action calls no model: it checks and diffs the facts committed in
+# .compliify/facts.json, which the plugin captured in each developer's own
+# Claude Code, comments the governance delta and, with a compliify token,
+# pushes the facts to the server. Giving it your own key opts in to also
+# scanning the changed files here (headless Claude, billed to that key).
+#
+# Flow: check inputs -> download runtime -> [with a key: install Claude Code
+# CLI] -> merge base and changed files -> [with a key: scan changed files
+# (ANTHROPIC_API_KEY makes the runner add --bare automatically)] -> build the
+# comment -> optional POST /v1/ingest -> report. With `architecture: "true"`
+# the scan surveys the whole repository for architecture (components and data
+# flows) instead of only the changed files.
+name: "compliify governance check"
+description: >-
+  Observe-mode governance for AI-generated apps: evaluates the compliify rule
+  pack over the facts committed in .compliify/facts.json (captured by the
+  plugin in each developer's own Claude Code, so this action calls no model),
+  comments the governance delta on the pull request, and optionally pushes the
+  fact bundle to a compliify server. With your own anthropic_api_key it also
+  extracts facts from the changed files via headless Claude. Never fails the
+  build unless you opt in with `enforce: "true"`, and never fails silently.
+author: "RR42"
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  anthropic_api_key:
+    description: >-
+      Optional. Your own Anthropic API key, to also scan the changed files here
+      with headless Claude (claude -p; the compliify runner adds --bare
+      automatically when ANTHROPIC_API_KEY is set). The tokens are billed to
+      that key. Leave it empty (the default) and the action calls no model: it
+      checks and diffs the facts committed in .compliify/facts.json.
+    required: false
+    default: ""
+  server_url:
+    description: >-
+      Base URL of a compliify server (e.g. https://compliify.example.com).
+      When set together with compliify_token, the fact bundle is pushed to
+      POST <server_url>/v1/ingest after the scan.
+    required: false
+    default: ""
+  compliify_token:
+    description: "compliify API token (cpfy_…) used as Bearer auth for /v1/ingest."
+    required: false
+    default: ""
+  console_url:
+    description: >-
+      Base URL of the compliify console, for the links in the pull request
+      comment to the questions that need an answer. Defaults to server_url
+      (in the default deployment the API and the console share one origin).
+      Only http and https URLs are used.
+    required: false
+    default: ""
+  model:
+    description: "Model used for fact extraction."
+    required: false
+    default: "sonnet"
+  marketplace_ref:
+    description: >-
+      Git ref of the marketplace repository to download the plugin runtime
+      from. Pin a tag (for example v0.3.0) or a commit SHA for reproducible
+      runs.
+    required: false
+    default: "main"
+  marketplace_repo:
+    description: >-
+      GitHub repository (owner/name) that hosts the plugin runtime under
+      plugins/compliify. Change it only for a fork or mirror of the
+      marketplace.
+    required: false
+    default: "rr42-hq/compliify-marketplace"
+  github_token:
+    description: "Token for the pull request comment and the marketplace rules listing."
+    required: false
+    default: ${{ github.token }}
+  architecture:
+    description: >-
+      "true" runs `compliify scan --architecture`: a full architecture survey
+      of the repository (components and data flows, recorded as proposed
+      facts) instead of scanning only the changed files. Needs
+      anthropic_api_key. Slower and uses more API quota - meant for a scheduled
+      or one-off run, not every pull request. The action never commits
+      `.compliify/facts.json`: the survey's
+      result is kept only when `server_url` and `compliify_token` are set (it
+      is ingested); without them it disappears with the runner. Anything else
+      keeps the changed-files scan. Still never fails the build.
+    required: false
+    default: "false"
+  send_code_snippets:
+    description: >-
+      "false" keeps source lines out of what is pushed to the server: the
+      facts, their file:line references and the commit still go, the console
+      just shows no code under them. On by default - a reviewer sees the lines
+      behind a fact without a checkout. Secret-looking content is redacted
+      either way, and nothing is sent without server_url and compliify_token.
+    required: false
+    default: "true"
+  enforce:
+    description: >-
+      "true" makes the job FAIL when a rule listed under "enforce" in
+      `.compliify/config.json` has a finding (`compliify check --enforce`).
+      Off by default: the action is observe-only. The check runs last, after
+      the PR comment and the ingest, so those still happen on a failing run.
+      Enforcement fails closed: if the compliify runtime could not be
+      downloaded, or the runtime at `marketplace_ref` is too old to know
+      `check --enforce`, the job fails with an explanation instead of silently
+      passing. An unknown rule id or invalid config also fails it.
+    required: false
+    default: "false"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Check the inputs
+      id: preflight
+      shell: bash
+      continue-on-error: true
+      env:
+        API_KEY_GIVEN: ${{ inputs.anthropic_api_key != '' }}
+      run: |
+        set +e
+        if [ "$API_KEY_GIVEN" = "true" ]; then
+          echo "api_key=present" >> "$GITHUB_OUTPUT"
+        else
+          echo "api_key=missing" >> "$GITHUB_OUTPUT"
+          echo "compliify: no anthropic_api_key - no model runs in this workflow. The check, the diff and the ingest use the facts committed in .compliify/facts.json."
+          echo "compliify: to also scan the changed files here, pass your own key as anthropic_api_key (a repository secret; secrets are not available to pull requests from forks)."
+        fi
+        exit 0
+
+    - name: Download the compliify runtime
+      id: runtime
+      shell: bash
+      continue-on-error: true
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        MARKETPLACE_REF: ${{ inputs.marketplace_ref }}
+        MARKETPLACE_REPO: ${{ inputs.marketplace_repo }}
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+      run: |
+        export RUNTIME_DIR="$RUNNER_TEMP/compliify-runtime"
+        node "$ACTION_PATH/scripts/fetch-runtime.mjs"
+
+    - name: Install the Claude Code CLI (headless extraction)
+      id: claude
+      if: steps.runtime.outputs.ready == 'true' && steps.preflight.outputs.api_key == 'present'
+      shell: bash
+      continue-on-error: true
+      run: |
+        set +e
+        if command -v claude >/dev/null 2>&1; then
+          echo "claude already installed"
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        LOG="$RUNNER_TEMP/compliify-claude-install.log"
+        npm install -g @anthropic-ai/claude-code > "$LOG" 2>&1
+        if command -v claude >/dev/null 2>&1; then
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+        else
+          tail -n 15 "$LOG"
+          last=$(grep -v '^[[:space:]]*$' "$LOG" | tail -n 1 | tr -d '\r' | cut -c1-200)
+          echo "ready=false" >> "$GITHUB_OUTPUT"
+          echo "reason=could not install @anthropic-ai/claude-code with npm ($last) - install it before this action or use a runner that may write to the global npm prefix" >> "$GITHUB_OUTPUT"
+        fi
+        exit 0
+
+    - name: Determine merge-base and changed files
+      id: base
+      shell: bash
+      continue-on-error: true
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        PUSH_BEFORE_SHA: ${{ github.event.before }}
+      run: |
+        set +e
+        if [ "$EVENT_NAME" = "pull_request" ]; then
+          BASE_SHA="$PR_BASE_SHA"
+        else
+          BASE_SHA="$PUSH_BEFORE_SHA"
+        fi
+        case "$BASE_SHA" in
+          ""|0000000000000000000000000000000000000000) BASE_SHA="" ;;
+        esac
+        if [ -n "$BASE_SHA" ]; then
+          git rev-parse --verify --quiet "${BASE_SHA}^{commit}" >/dev/null 2>&1 \
+            || git fetch --no-tags --depth=100 origin "$BASE_SHA" >/dev/null 2>&1
+        fi
+        MERGE_BASE=""
+        if [ -n "$BASE_SHA" ]; then
+          MERGE_BASE=$(git merge-base "$BASE_SHA" HEAD 2>/dev/null)
+          [ -z "$MERGE_BASE" ] && MERGE_BASE="$BASE_SHA"
+        fi
+        CHANGED_FILE="$RUNNER_TEMP/compliify-changed.txt"
+        ALL_CHANGED="$RUNNER_TEMP/compliify-changed-all.txt"
+        : > "$CHANGED_FILE"
+        BASE_ERROR=""
+        if [ -n "$MERGE_BASE" ]; then
+          if git -c core.quotePath=false diff --name-only --diff-filter=ACMR "$MERGE_BASE" HEAD > "$ALL_CHANGED" 2>/dev/null; then
+            head -n 200 "$ALL_CHANGED" > "$CHANGED_FILE"
+          else
+            BASE_ERROR="could not compare with the base commit of this pull request - use actions/checkout with fetch-depth: 0"
+          fi
+        elif [ "$EVENT_NAME" = "pull_request" ]; then
+          BASE_ERROR="could not find the base commit of this pull request - use actions/checkout with fetch-depth: 0"
+        fi
+        COUNT=$(wc -l < "$CHANGED_FILE" | tr -d '[:space:]')
+        {
+          echo "merge_base=$MERGE_BASE"
+          echo "changed_file=$CHANGED_FILE"
+          echo "changed_count=$COUNT"
+          echo "base_error=$BASE_ERROR"
+        } >> "$GITHUB_OUTPUT"
+        echo "merge-base: ${MERGE_BASE:-<none>} - $COUNT changed file(s)"
+        [ -n "$BASE_ERROR" ] && echo "compliify: $BASE_ERROR"
+        exit 0
+
+    - name: Extract governance facts (compliify scan)
+      id: scan
+      if: steps.runtime.outputs.ready == 'true' && steps.claude.outputs.ready == 'true'
+      shell: bash
+      continue-on-error: true
+      env:
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
+        COMPLIIFY_JS: ${{ steps.runtime.outputs.compliify_js }}
+        CHANGED_FILE: ${{ steps.base.outputs.changed_file }}
+        MERGE_BASE: ${{ steps.base.outputs.merge_base }}
+        BASE_ERROR: ${{ steps.base.outputs.base_error }}
+        COMPLIIFY_MODEL_INPUT: ${{ inputs.model }}
+        COMPLIIFY_ARCHITECTURE: ${{ inputs.architecture }}
+      run: |
+        set +e
+        out() { printf '%s=%s\n' "$1" "$2" >> "$GITHUB_OUTPUT"; }
+        ERR="$RUNNER_TEMP/compliify-scan.err"
+        OUT="$RUNNER_TEMP/compliify-scan.out"
+        # A key pasted with a trailing newline is a common reason for a 401.
+        ANTHROPIC_API_KEY=$(printf '%s' "$ANTHROPIC_API_KEY" | tr -d '[:space:]')
+        export ANTHROPIC_API_KEY
+        if [ "$COMPLIIFY_ARCHITECTURE" = "true" ]; then
+          # Survey mode picks its own seed files (manifests, configs, entry
+          # points); the changed-file list is not needed.
+          echo "compliify: surveying the repository for architecture - this can take several minutes..."
+          node "$COMPLIIFY_JS" scan --architecture --model "$COMPLIIFY_MODEL_INPUT" --format text > "$OUT" 2> "$ERR"
+          code=$?
+        else
+          if [ -n "$BASE_ERROR" ]; then
+            out status failed
+            out reason "$BASE_ERROR"
+            exit 0
+          fi
+          if [ ! -s "$CHANGED_FILE" ]; then
+            echo "No changed files vs base - skipping extraction."
+            out status skipped
+            if [ -z "$MERGE_BASE" ]; then
+              out reason 'no base commit for this event, so no changed files (set architecture: "true" to survey the whole repository)'
+            else
+              out reason "no files changed compared with the base commit"
+            fi
+            exit 0
+          fi
+          files=()
+          while IFS= read -r line || [ -n "$line" ]; do files+=("$line"); done < "$CHANGED_FILE"
+          # A changed file may be named like an option (`--architecture`): a
+          # leading `./` keeps every entry a path (the CLI strips it again).
+          files=("${files[@]/#-/./-}")
+          echo "compliify: scanning ${#files[@]} changed file(s) with claude..."
+          node "$COMPLIIFY_JS" scan --files "${files[@]}" --model "$COMPLIIFY_MODEL_INPUT" --format text > "$OUT" 2> "$ERR"
+          code=$?
+        fi
+        # What the scan printed comes from the repository and from the model: a
+        # line that starts with "::" must not be taken for a workflow command
+        # (a forged annotation, or ::add-mask::). Commands are switched off
+        # for the length of the output and back on with a token nobody can guess.
+        STOP="compliify-$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')"
+        echo "::stop-commands::$STOP"
+        cat "$OUT"
+        cat "$ERR" >&2
+        echo "::$STOP::"
+        if [ "$code" -eq 0 ]; then
+          out status ok
+          # The first line of the scan's own account ("Scanned 3 file(s): ...").
+          out reason "$(grep -v '^[[:space:]]*$' "$OUT" | head -n 1 | tr -d '\r' | cut -c1-240)"
+        else
+          last=$(grep -v '^[[:space:]]*$' "$ERR" | tail -n 1 | tr -d '\r' | cut -c1-240)
+          out status failed
+          out reason "the extraction failed (${last:-exit code $code}) - check that the anthropic_api_key secret is valid and has quota"
+        fi
+        exit 0
+
+    - name: Build the pull request comment
+      id: comment
+      if: steps.runtime.outputs.ready == 'true'
+      shell: bash
+      continue-on-error: true
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        COMPLIIFY_JS: ${{ steps.runtime.outputs.compliify_js }}
+        MERGE_BASE: ${{ steps.base.outputs.merge_base }}
+        CONSOLE_URL: ${{ inputs.console_url || inputs.server_url }}
+        MARKETPLACE_REF: ${{ inputs.marketplace_ref }}
+      run: node "$ACTION_PATH/scripts/build-comment.mjs"
+
+    - name: Push the fact bundle to the compliify server (/v1/ingest)
+      id: ingest
+      if: inputs.server_url != '' && inputs.compliify_token != ''
+      shell: bash
+      continue-on-error: true
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        COMPLIIFY_SERVER_URL: ${{ inputs.server_url }}
+        COMPLIIFY_TOKEN: ${{ inputs.compliify_token }}
+        COMPLIIFY_SNIPPETS: ${{ inputs.send_code_snippets }}
+        COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        REPO: ${{ github.repository }}
+        BRANCH: ${{ github.head_ref || github.ref_name }}
+      run: node "$ACTION_PATH/scripts/ingest.mjs"
+
+    - name: Report the result (job summary and pull request comment)
+      id: report
+      if: always()
+      shell: bash
+      continue-on-error: true
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        EVENT_NAME: ${{ github.event_name }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        IS_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+        API_KEY: ${{ steps.preflight.outputs.api_key }}
+        SERVER_URL_SET: ${{ inputs.server_url != '' }}
+        TOKEN_SET: ${{ inputs.compliify_token != '' }}
+        RUNTIME_OUTCOME: ${{ steps.runtime.outcome }}
+        RUNTIME_READY: ${{ steps.runtime.outputs.ready }}
+        RUNTIME_REASON: ${{ steps.runtime.outputs.reason }}
+        RUNTIME_VERSION: ${{ steps.runtime.outputs.version }}
+        RUNTIME_MODE: ${{ steps.runtime.outputs.mode }}
+        CLAUDE_OUTCOME: ${{ steps.claude.outcome }}
+        CLAUDE_READY: ${{ steps.claude.outputs.ready }}
+        CLAUDE_REASON: ${{ steps.claude.outputs.reason }}
+        SCAN_OUTCOME: ${{ steps.scan.outcome }}
+        SCAN_STATUS: ${{ steps.scan.outputs.status }}
+        SCAN_REASON: ${{ steps.scan.outputs.reason }}
+        COMMENT_OUTCOME: ${{ steps.comment.outcome }}
+        COMMENT_STATUS: ${{ steps.comment.outputs.status }}
+        COMMENT_REASON: ${{ steps.comment.outputs.reason }}
+        COMMENT_FILE: ${{ steps.comment.outputs.file }}
+        COMMENT_LEGACY: ${{ steps.comment.outputs.legacy }}
+        INGEST_OUTCOME: ${{ steps.ingest.outcome }}
+      run: |
+        if command -v node >/dev/null 2>&1; then
+          node "$ACTION_PATH/scripts/finalize.mjs"
+        else
+          echo "::warning::compliify did not run completely: Node.js is not installed on this runner (compliify needs Node.js >= 20 - add actions/setup-node before this action)."
+          if [ -n "$GITHUB_STEP_SUMMARY" ]; then
+            printf '%s\n' "### compliify did not run completely" "" "Node.js is not installed on this runner. compliify needs Node.js >= 20: add actions/setup-node before this action." >> "$GITHUB_STEP_SUMMARY"
+          fi
+        fi
+        exit 0
+
+    # Opt-in policy gate. Deliberately NOT continue-on-error and deliberately
+    # last: the report (job summary, pull request comment) and the ingest above
+    # have already happened, and this step's exit code (1 = enforced finding,
+    # 2 = operational error) fails the job.
+    - name: Enforce policy (compliify check --enforce)
+      id: enforce
+      if: inputs.enforce == 'true'
+      shell: bash
+      env:
+        RUNTIME_READY: ${{ steps.runtime.outputs.ready }}
+        COMPLIIFY_JS: ${{ steps.runtime.outputs.compliify_js }}
+      run: |
+        if [ "$RUNTIME_READY" != "true" ]; then
+          echo "::error::compliify: enforcement was requested but the compliify runtime could not be downloaded - failing closed."
+          exit 1
+        fi
+        if ! node "$COMPLIIFY_JS" check --help 2>/dev/null | grep -q -- '--enforce'; then
+          echo "::error::compliify: the runtime at this marketplace_ref does not support 'check --enforce' - pin marketplace_ref to a release that does, or set enforce to false."
+          exit 1
+        fi
+        # The findings print values from the repository: no workflow commands while they do.
+        STOP="compliify-$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')"
+        echo "::stop-commands::$STOP"
+        node "$COMPLIIFY_JS" check --enforce --format text
+        code=$?
+        echo "::$STOP::"
+        exit "$code"

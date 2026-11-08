@@ -1,0 +1,32 @@
+#!/usr/bin/env node
+// `compliify` - launcher for the CLI bundled in this plugin.
+//
+// Claude Code puts a plugin's bin/ on the PATH of its Bash tool while the
+// plugin is enabled, so skills and Claude run `compliify check` without
+// knowing where the plugin is cached (that path changes with every version).
+// The CLI itself is dist/compliify.js. This file only finds it relative to
+// its own real path - a symlink or a PATH lookup does not change where the
+// bundle is - and runs it in this process, so argv, stdio, signals and the
+// exit code are exactly those of `node dist/compliify.js`.
+//
+// ESM on purpose: the plugin's package.json says "type": "module", the same
+// marker that lets node load dist/compliify.js.
+import { existsSync, realpathSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+const bundle = join(
+  dirname(realpathSync(fileURLToPath(import.meta.url))),
+  "..",
+  "dist",
+  "compliify.js",
+);
+
+if (!existsSync(bundle)) {
+  process.stderr.write(
+    `compliify: ${bundle} not found - the plugin copy is incomplete (in a source checkout run "npm run bundle-plugin")\n`,
+  );
+  process.exit(2);
+}
+
+await import(pathToFileURL(bundle).href);

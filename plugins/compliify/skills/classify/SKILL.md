@@ -50,6 +50,30 @@ Ask: what happens to a person because of this system's output?
   effect - compliify's `danger.autonomy` rule flags exactly that. Reducing
   either axis (add approval, reduce effect) moves the system out of it.
 
+## EU AI Act risk tier (`context.ai_act_risk`)
+
+The Act sorts AI systems by what they are used for. Help the user place theirs,
+but the decision is theirs - it is a legal judgement, so never pick the tier for
+them and never record one they have not stated. If they are unsure, say that a
+lawyer or the company's AI-governance owner should decide, and leave it open.
+
+- `prohibited` - a practice the Act bans outright (Art. 5), for example
+  manipulative techniques that cause harm, social scoring, untargeted scraping
+  of facial images, emotion recognition at work or in education. A system in
+  this tier must not be run as it is.
+- `high` - listed use cases (Art. 6, Annex III): e.g. recruitment and candidate
+  ranking, credit scoring, access to education or essential services, biometric
+  identification, safety components of regulated products. These carry
+  requirements such as human oversight (Art. 14) and logging (Art. 12); compliify
+  checks both against `behavior.human_in_loop` and `controls.logging`.
+- `limited` - systems with transparency duties (Art. 50): chatbots that must say
+  they are AI, synthetic media that must be labelled.
+- `minimal` - everything else, e.g. internal developer tooling, spam filters.
+- `unknown` - not yet assessed (the same as leaving it open).
+
+Ask what the system is **used for** and whom it affects, not what model it
+runs. The same model can sit in different tiers depending on the use.
+
 ## Recording
 
 Once the user settles on a classification, confirm the exact enum value and

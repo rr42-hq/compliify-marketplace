@@ -1,0 +1,29 @@
+# A high-risk system without confirmed human oversight.
+id: legal.ai-act-high-risk-oversight
+category: legal
+scope:
+  fact: context.ai_act_risk
+  op: eq
+  value: high
+when:
+  any:
+    - fact: behavior.human_in_loop
+      op: eq
+      value: never
+    - fact: behavior.human_in_loop
+      op: unknown
+then:
+  verdict: needs_review
+  severity: high
+action: warn
+because:
+  headline: "A high-risk system without confirmed human oversight"
+  rationale: >-
+    The system is classified as high-risk, and high-risk systems must be
+    designed so that natural persons can effectively oversee them while they
+    are in use. The recorded facts say no human reviews its outputs, or that
+    this has not been established. Document the human oversight measures, or
+    correct the facts if they exist.
+  citation: "EU AI Act (Regulation (EU) 2024/1689) Art. 14"
+  remedy: >-
+    Describe how a person oversees the system's outputs and note it in the record - or correct the facts if that oversight already exists.

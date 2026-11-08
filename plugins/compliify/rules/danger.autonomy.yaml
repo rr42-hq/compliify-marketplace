@@ -14,6 +14,7 @@ then:
   severity: high
 action: warn
 because:
+  headline: "The system acts on its own on decisions that matter to people"
   rationale: >-
     The system acts autonomously and its outputs have significant or legally
     relevant effects on the persons concerned. Decisions based solely on
@@ -21,3 +22,5 @@ because:
     are restricted and require safeguards such as meaningful human
     intervention and the right to contest the decision.
   citation: "DSGVO Art. 22"
+  remedy: >-
+    Add a human review step before outputs take effect, or limit the system to suggestions, and document how affected people can contest a decision.
