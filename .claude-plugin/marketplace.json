@@ -7,7 +7,7 @@
     {
       "name": "compliify",
       "source": "./plugins/compliify",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "relevance": {
         "topic": "AI governance",
         "signals": {
