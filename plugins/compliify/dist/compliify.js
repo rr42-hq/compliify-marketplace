@@ -35933,6 +35933,10 @@ function git(cwd, args) {
     return void 0;
   }
 }
+function gitToplevel(dir) {
+  const top = git(dir, ["rev-parse", "--show-toplevel"]);
+  return top === void 0 ? void 0 : resolve(top);
+}
 function resolveRepoRoot(cwd = process.cwd()) {
   return git(cwd, ["rev-parse", "--show-toplevel"]) ?? resolve(cwd);
 }
@@ -36901,6 +36905,10 @@ async function fileExists(path2) {
     return false;
   }
 }
+
+// packages/cli/src/commands/mcp.ts
+import { existsSync as existsSync2, statSync } from "node:fs";
+import { isAbsolute as isAbsolute2 } from "node:path";
 
 // node_modules/zod/v3/helpers/util.js
 var util;
@@ -46513,7 +46521,7 @@ function readVersion(relative3) {
 }
 function compliifyVersion() {
   if (true) {
-    return "0.4.0";
+    return "0.4.1";
   }
   return readVersion("../../../plugin/.claude-plugin/plugin.json") ?? readVersion("../package.json") ?? "0.0.0";
 }
@@ -46553,17 +46561,45 @@ function optionsOf2(meta3) {
   if (meta3 === void 0) return null;
   return meta3.input.kind === "choice" || meta3.input.kind === "multi" ? meta3.input.options : null;
 }
+function workspaceFor(sessionDir, projectDir) {
+  let root;
+  if (projectDir !== void 0 && projectDir !== "") {
+    if (!isAbsolute2(projectDir)) {
+      throw new Error(`project_dir must be an absolute path (got "${projectDir}")`);
+    }
+    if (!existsSync2(projectDir) || !statSync(projectDir).isDirectory()) {
+      throw new Error(`project_dir "${projectDir}" is not a folder that exists`);
+    }
+    root = gitToplevel(projectDir);
+    if (root === void 0) {
+      throw new Error(
+        `project_dir "${projectDir}" is not inside a git repository - give the repository's folder (the one that contains .git)`
+      );
+    }
+  } else {
+    root = gitToplevel(sessionDir);
+    if (root === void 0) {
+      throw new Error(
+        `The folder this session runs in (${sessionDir}) is not inside a git repository, so facts recorded there would not be committed with your code and the system would be named after the folder. Call the tool again with project_dir set to the absolute path of the repository you are working on (the folder that contains .git).`
+      );
+    }
+  }
+  return { root, paths: compliifyPaths(root) };
+}
+var projectDirField = external_exports.string().optional().describe(
+  "Absolute path of the git repository to work on. Leave it out unless the tool answers that the folder of this session is not a git repository."
+);
 function buildMcpServer(repoDir) {
-  const root = resolveRepoRoot(repoDir);
-  const paths = compliifyPaths(root);
   const server = new McpServer({ name: "compliify", version: compliifyVersion() });
   server.registerTool(
     "get_open_questions",
     {
-      description: 'List the open governance questions for this repository - registered fact keys with no confirmed fact yet, plus architecture questions the code scan raised. Each has a short `label`, the plain-language `question`, `why` it matters and who can answer it: `answerer` "developer" (the answer is in the code or infrastructure) or "compliance" (an organisational or legal decision - ask only the user who is that person, otherwise leave it for the console). Closed questions list their `options` as {value, label}: offer the labels, submit the value. Questions the developer can answer come first. Ask the user at most two per session, then record answers with submit_fact.'
+      description: 'List the open governance questions for this repository - registered fact keys with no confirmed fact yet, plus architecture questions the code scan raised. Each has a short `label`, the plain-language `question`, `why` it matters and who can answer it: `answerer` "developer" (the answer is in the code or infrastructure) or "compliance" (an organisational or legal decision - ask only the user who is that person, otherwise leave it for the console). Closed questions list their `options` as {value, label}: offer the labels, submit the value. Questions the developer can answer come first. Ask the user at most two per session, then record answers with submit_fact.',
+      inputSchema: { project_dir: projectDirField }
     },
-    async () => {
+    async ({ project_dir: projectDir }) => {
       try {
+        const { paths } = workspaceFor(repoDir, projectDir);
         const file2 = await readFactFile(paths.factsPath);
         const open2 = governanceFirst(openQuestionEntries(file2, registry2)).map((entry) => {
           const def = resolveFactKey(entry.key);
@@ -46608,11 +46644,13 @@ function buildMcpServer(repoDir) {
           external_exports.record(external_exports.string(), external_exports.unknown())
         ]).describe(
           "The user's answer. Must match the key's allowed values exactly (get_open_questions lists them). Architecture keys take an object."
-        )
+        ),
+        project_dir: projectDirField
       }
     },
-    async ({ key, value }) => {
+    async ({ key, value, project_dir: projectDir }) => {
       try {
+        const { root, paths } = workspaceFor(repoDir, projectDir);
         const def = resolveFactKey(key);
         if (def === void 0) {
           return errorText(
@@ -46693,11 +46731,13 @@ function buildMcpServer(repoDir) {
     {
       description: "Explain a finding by rule id: re-evaluates the rule pack against the current facts and shows why the rule did or did not trigger, including the facts used.",
       inputSchema: {
-        rule_id: external_exports.string().min(1).describe("Rule id, e.g. legal.pii-non-eu-egress")
+        rule_id: external_exports.string().min(1).describe("Rule id, e.g. legal.pii-non-eu-egress"),
+        project_dir: projectDirField
       }
     },
-    async ({ rule_id: ruleId }) => {
+    async ({ rule_id: ruleId, project_dir: projectDir }) => {
       try {
+        const { paths } = workspaceFor(repoDir, projectDir);
         const rules = loadRulePack();
         const rule = rules.find((r) => r.id === ruleId);
         if (rule === void 0) {
@@ -46742,11 +46782,13 @@ Rule intent: ${rule.because.rationale} - ${rule.because.citation}`
     {
       description: 'Show the architecture recorded for this repository - components (services, datastores, queues, external services, AI models) and the data flows between them, rendered from the facts, with what is still unknown or needs attention listed first. format: "text" (default, an outline) or "mermaid" (diagram source). Elements are proposed until the user confirms them; correct one with submit_fact.',
       inputSchema: {
-        format: external_exports.enum(["text", "mermaid"]).optional().describe('"text" (default) or "mermaid"')
+        format: external_exports.enum(["text", "mermaid"]).optional().describe('"text" (default) or "mermaid"'),
+        project_dir: projectDirField
       }
     },
-    async ({ format }) => {
+    async ({ format, project_dir: projectDir }) => {
       try {
+        const { root, paths } = workspaceFor(repoDir, projectDir);
         const file2 = await readFactFile(paths.factsPath);
         const graph = buildArchitectureGraph(file2, {
           isStale: makeStaleCheck(root, file2)
@@ -46772,11 +46814,13 @@ ${renderArchitectureText(graph)}`
       description: 'Show how the code INSIDE each container of the architecture is built - its modules, what each is responsible for, and which module calls which (C4 level 3), rendered from the facts. container: a container id to show only that one; format: "text" (default, an outline) or "mermaid" (needs container). Modules are proposed until the user confirms them. Use it to understand what the code does before changing it.',
       inputSchema: {
         container: external_exports.string().optional().describe("Container id (an architecture component id); default: all"),
-        format: external_exports.enum(["text", "mermaid"]).optional().describe('"text" (default) or "mermaid"')
+        format: external_exports.enum(["text", "mermaid"]).optional().describe('"text" (default) or "mermaid"'),
+        project_dir: projectDirField
       }
     },
-    async ({ container, format }) => {
+    async ({ container, format, project_dir: projectDir }) => {
       try {
+        const { root } = workspaceFor(repoDir, projectDir);
         return text(await runStructure({ cwd: root, format: format ?? "text", ...container !== void 0 ? { container } : {} }));
       } catch (err) {
         return errorText(`get_code_structure failed: ${asMessage(err)}`);
@@ -46788,11 +46832,13 @@ ${renderArchitectureText(graph)}`
     {
       description: 'Evaluate the rule pack against this repository\'s recorded facts and return the findings, each with its legal basis and a plain-language next step. Same output as `compliify check`. Observe mode: findings are informational, nothing is blocked. format: "text" (default) or "markdown".',
       inputSchema: {
-        format: external_exports.enum(["text", "markdown"]).optional().describe('"text" (default) or "markdown"')
+        format: external_exports.enum(["text", "markdown"]).optional().describe('"text" (default) or "markdown"'),
+        project_dir: projectDirField
       }
     },
-    async ({ format }) => {
+    async ({ format, project_dir: projectDir }) => {
       try {
+        const { root } = workspaceFor(repoDir, projectDir);
         return text(await runCheck({ cwd: root, format: format ?? "text" }));
       } catch (err) {
         return errorText(`run_check failed: ${asMessage(err)}`);
@@ -46804,11 +46850,13 @@ ${renderArchitectureText(graph)}`
     {
       description: 'Render the DSGVO Art. 30 record of processing activities from the recorded facts, as Markdown - same document as `compliify report`. Every field that is not known yet is marked as such. lang: "de" (default, the legal original) or "en".',
       inputSchema: {
-        lang: external_exports.enum(["de", "en"]).optional().describe('"de" (default) or "en"')
+        lang: external_exports.enum(["de", "en"]).optional().describe('"de" (default) or "en"'),
+        project_dir: projectDirField
       }
     },
-    async ({ lang }) => {
+    async ({ lang, project_dir: projectDir }) => {
       try {
+        const { root } = workspaceFor(repoDir, projectDir);
         return text(await runReport({ cwd: root, lang: lang ?? "de" }));
       } catch (err) {
         return errorText(`get_report failed: ${asMessage(err)}`);
@@ -46823,11 +46871,13 @@ ${renderArchitectureText(graph)}`
       inputSchema: {
         base: gitRef.optional().describe("Git ref to compare from; default: where this branch left the default branch"),
         head: gitRef.optional().describe("Git ref to compare to; default HEAD"),
-        format: external_exports.enum(["text", "markdown", "json"]).optional().describe('"text" (default), "markdown" or "json"')
+        format: external_exports.enum(["text", "markdown", "json"]).optional().describe('"text" (default), "markdown" or "json"'),
+        project_dir: projectDirField
       }
     },
-    async ({ base: base2, head, format }) => {
+    async ({ base: base2, head, format, project_dir: projectDir }) => {
       try {
+        const { root } = workspaceFor(repoDir, projectDir);
         return text(
           await runDiff({
             cwd: root,
@@ -46844,7 +46894,8 @@ ${renderArchitectureText(graph)}`
   return server;
 }
 async function runMcpServer() {
-  const repoDir = process.env["COMPLIIFY_PROJECT_DIR"] ?? process.cwd();
+  const fromPlugin = process.env["COMPLIIFY_PROJECT_DIR"];
+  const repoDir = fromPlugin !== void 0 && fromPlugin.trim() !== "" ? fromPlugin : process.cwd();
   const server = buildMcpServer(repoDir);
   await server.connect(new StdioServerTransport());
 }
@@ -47284,7 +47335,7 @@ import { homedir as homedir2 } from "node:os";
 import { dirname as dirname3, join as join6 } from "node:path";
 
 // packages/cli/src/extract/skill.ts
-import { existsSync as existsSync2, readFileSync as readFileSync6 } from "node:fs";
+import { existsSync as existsSync3, readFileSync as readFileSync6 } from "node:fs";
 import { join as join5 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 var SKILL_REL_PATH = "skills/extract-facts/SKILL.md";
@@ -47315,7 +47366,7 @@ function stripFrontmatter(markdown) {
 function loadExtractSkillBody() {
   const tried = candidates();
   for (const path2 of tried) {
-    if (existsSync2(path2)) {
+    if (existsSync3(path2)) {
       return stripFrontmatter(readFileSync6(path2, "utf8"));
     }
   }
@@ -47452,19 +47503,25 @@ var DENY_READ = [
   )
 ];
 var DEFAULT_MAX_TURNS = 15;
+var PROMPT_ARG_MAX = 16e3;
+function promptGoesOnStdin(prompt) {
+  return prompt.length > PROMPT_ARG_MAX;
+}
 function stripSchemaDialect(schema) {
   const { $schema: _dialect, $id: _id, ...rest } = schema;
   return rest;
 }
 function claudeArgs(opts) {
+  const onStdin = promptGoesOnStdin(opts.prompt);
   const model = opts.model ?? process.env["COMPLIIFY_MODEL"] ?? "sonnet";
   const maxTurns = opts.maxTurns !== void 0 && Number.isInteger(opts.maxTurns) && opts.maxTurns > 0 ? opts.maxTurns : DEFAULT_MAX_TURNS;
   const args = [
     "-p",
     // A prompt that starts with "-" is read by the claude CLI as an option
     // ("error: unknown option '---...'"); a leading line break keeps it a prompt.
-    opts.prompt.startsWith("-") ? `
-${opts.prompt}` : opts.prompt,
+    // A long prompt is not an argument at all: it goes to stdin (see PROMPT_ARG_MAX).
+    ...onStdin ? [] : [opts.prompt.startsWith("-") ? `
+${opts.prompt}` : opts.prompt],
     "--output-format",
     "json",
     "--json-schema",
@@ -47495,7 +47552,7 @@ function describeSpawnFailure(err, timeoutMs) {
     return `claude did not finish within ${timeoutMs < 1e3 ? `${timeoutMs}ms` : `${Math.round(timeoutMs / 1e3)}s`} and was stopped`;
   }
   const stderr = typeof e.stderr === "string" ? e.stderr.trim().slice(-500) : "";
-  const how = typeof e.code === "string" ? `could not run claude (${e.code})` : typeof e.code === "number" ? `claude exited with code ${e.code}` : typeof e.signal === "string" ? `claude was terminated by ${e.signal}` : "claude failed";
+  const how = e.code === "ENOENT" && process.platform === "win32" ? "could not run claude (ENOENT) - on Windows compliify starts claude.exe, which the native installer puts on PATH; a claude.cmd from an npm install cannot be started this way. Install Claude Code natively, or set CLAUDE_BIN to the full path of claude.exe" : typeof e.code === "string" ? `could not run claude (${e.code})` : typeof e.code === "number" ? `claude exited with code ${e.code}` : typeof e.signal === "string" ? `claude was terminated by ${e.signal}` : "claude failed";
   if (stderr !== "") return `${how}: ${stderr}`;
   const message = typeof e.message === "string" ? e.message : "";
   return message === "" || message.length > 300 ? how : `${how}: ${message}`;
@@ -47506,24 +47563,19 @@ var runClaude = async (opts) => {
   const isScript = /\.(mjs|cjs|js)$/.test(bin);
   const file2 = isScript ? process.execPath : bin;
   const finalArgs = isScript ? [bin, ...args] : args;
+  const onStdin = promptGoesOnStdin(opts.prompt);
   const options = {
     cwd: opts.cwd,
     env: { ...process.env, COMPLIIFY_EXTRACTION: "1" },
     maxBuffer: 64 * 1024 * 1024,
-    timeout: opts.timeoutMs ?? 15e4,
-    // The prompt is passed via -p; without this the CLI waits ~3s for stdin
-    // that never arrives and prints a warning on every extraction. execFile
-    // forwards `stdio` to spawn at runtime, but @types/node's
-    // ExecFileOptions omits it - hence the cast. DO NOT remove the ignore.
-    stdio: ["ignore", "pipe", "pipe"]
+    timeout: opts.timeoutMs ?? 15e4
   };
   let stdout;
   try {
-    ({ stdout } = await execFileAsync(
-      file2,
-      finalArgs,
-      options
-    ));
+    const run = execFileAsync(file2, finalArgs, options);
+    run.child.stdin?.on("error", () => void 0);
+    run.child.stdin?.end(onStdin ? opts.prompt : void 0);
+    ({ stdout } = await run);
   } catch (err) {
     throw new Error(describeSpawnFailure(err, options.timeout));
   }
@@ -47664,7 +47716,7 @@ import { dirname as dirname5 } from "node:path";
 
 // packages/cli/src/extract/detect.ts
 var import_yaml2 = __toESM(require_dist(), 1);
-import { readFileSync as readFileSync8, statSync } from "node:fs";
+import { readFileSync as readFileSync8, statSync as statSync2 } from "node:fs";
 import { join as join7 } from "node:path";
 
 // packages/cli/src/hook/relevance.ts
@@ -47750,7 +47802,7 @@ function isManifest(path2) {
 function readBounded(root, path2) {
   try {
     const abs = join7(root, path2);
-    const stat2 = statSync(abs);
+    const stat2 = statSync2(abs);
     if (!stat2.isFile() || stat2.size > MAX_MANIFEST_BYTES) return void 0;
     return readFileSync8(abs, "utf8");
   } catch {
@@ -47930,7 +47982,7 @@ function detectComponents(root, files) {
 }
 
 // packages/cli/src/extract/citations.ts
-import { readFileSync as readFileSync9, realpathSync as realpathSync2, statSync as statSync2 } from "node:fs";
+import { readFileSync as readFileSync9, realpathSync as realpathSync2, statSync as statSync3 } from "node:fs";
 var MAX_CHECKED_BYTES = 2 * 1024 * 1024;
 var WINDOW = 3;
 var NAMED_PRODUCT_KINDS = /* @__PURE__ */ new Set(["ai_model", "external_service", "datastore", "queue"]);
@@ -47994,7 +48046,7 @@ function verifyProposalCitations(root, proposal) {
     try {
       const abs = resolveInsideRepo(root, file2, realRoot);
       if (abs === void 0) out = void 0;
-      else if (statSync2(abs).size > MAX_CHECKED_BYTES) out = "too-large";
+      else if (statSync3(abs).size > MAX_CHECKED_BYTES) out = "too-large";
       else {
         const text2 = readFileSync9(abs, "utf8");
         const lines = text2.split("\n");
@@ -48943,6 +48995,11 @@ async function runScan(opts, runner = runClaude) {
     lines.push(
       survey ? "No starting points for a survey (is this a git repository with tracked files?) - evaluating existing facts only." : "No governance-relevant files to scan - evaluating existing facts only."
     );
+    if (gitToplevel(root) === void 0) {
+      lines.push(
+        `Note: ${root} is not inside a git repository, so there are no tracked files to scan. Run compliify from the folder of your repository (cd into it first).`
+      );
+    }
   } else {
     const content = await resolveContent({
       onWarn: (message) => lines.push(`compliify: ${message}`)
@@ -49674,14 +49731,14 @@ async function sessionStartHookMain() {
 
 // packages/cli/src/hook/stop.ts
 import { readFile as readFile7, rm } from "node:fs/promises";
-import { isAbsolute as isAbsolute2, join as join11, relative as relative2, sep as sep3 } from "node:path";
+import { isAbsolute as isAbsolute3, join as join11, relative as relative2, sep as sep3 } from "node:path";
 var MAX_QUESTIONS_SURFACED = 2;
 function toRepoRelative(root, rawPath) {
   const trimmed = rawPath.trim();
   if (trimmed === "") return void 0;
-  const abs = isAbsolute2(trimmed) ? trimmed : join11(root, trimmed);
+  const abs = isAbsolute3(trimmed) ? trimmed : join11(root, trimmed);
   const rel = relative2(root, abs);
-  if (rel === "" || rel.startsWith("..") || isAbsolute2(rel)) return void 0;
+  if (rel === "" || rel.startsWith("..") || isAbsolute3(rel)) return void 0;
   return rel.split(sep3).join("/");
 }
 function findingSignature(f) {
