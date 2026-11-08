@@ -32905,6 +32905,7 @@ function resolveOptions(options) {
   return {
     unknownMarker: options.unknownMarker ?? (() => UNKNOWN_MARKER),
     provenanceMarker: options.provenanceMarker ?? defaultProvenanceMarker,
+    afterValue: options.afterValue ?? (() => ""),
     formatValue: options.formatValue ?? ((_key, value) => formatValue(value)),
     formatKey: options.formatKey ?? ((key) => key),
     unknownItem: options.unknownItem ?? ((_key, question) => `- ${question}`),
@@ -32950,7 +32951,7 @@ function renderInline(key, active, opts) {
   if (isUnknownFact(fact))
     return opts.unknownMarker(key);
   const known = fact;
-  return oneLine(`${opts.formatValue(key, known.value)}${opts.provenanceMarker(known)}`);
+  return oneLine(`${opts.formatValue(key, known.value)}${opts.afterValue(known)}${opts.provenanceMarker(known)}`);
 }
 var INLINE_TOKEN = /(\{\{[^{}]*\}\})/g;
 function renderLine(line, active, opts) {
@@ -33285,7 +33286,7 @@ function buildArchitectureGraph(file2, opts = {}) {
   const components = /* @__PURE__ */ new Map();
   const removedComponents = /* @__PURE__ */ new Set();
   const flowFacts = [];
-  const describe3 = (id2, read, fact, removalProposed) => {
+  const describe4 = (id2, read, fact, removalProposed) => {
     const ref2 = factRef(fact);
     return {
       id: id2,
@@ -33321,12 +33322,12 @@ function buildArchitectureGraph(file2, opts = {}) {
     } else if (read.removed) {
       const last = fact.status === "proposed" ? priorLive(file2, fact, readComponent) : void 0;
       if (last !== void 0) {
-        components.set(parsed.id, describe3(parsed.id, last, fact, true));
+        components.set(parsed.id, describe4(parsed.id, last, fact, true));
       } else {
         removedComponents.add(parsed.id);
       }
     } else {
-      components.set(parsed.id, describe3(parsed.id, read, fact, false));
+      components.set(parsed.id, describe4(parsed.id, read, fact, false));
     }
   }
   const pending = [];
@@ -35840,6 +35841,9 @@ var ENGLISH_UNKNOWN = "not known yet - needs an answer";
 function answerHref(key) {
   return `compliify:answer/${encodeURIComponent(key)}`;
 }
+function changeHref(key) {
+  return `compliify:change/${encodeURIComponent(key)}`;
+}
 var ENGLISH_OPTIONS = {
   provenanceMarker: englishProvenanceMarker,
   formatValue: formatAnswer,
@@ -35857,8 +35861,18 @@ function optionsFor(locale, gapLinks) {
     return base2;
   const marker = locale === "en" ? ENGLISH_UNKNOWN : "unknown / needs review";
   const answer = locale === "en" ? "Answer" : "Beantworten";
+  const change = locale === "en" ? "change" : "\xE4ndern";
+  const linked = /* @__PURE__ */ new Set();
   return {
     ...base2,
+    // Right behind the value, before the "(confirmed by ...)" note: it belongs
+    // to the value, and can never be left alone at the end of a line.
+    afterValue: (fact) => {
+      if (linked.has(fact.key))
+        return "";
+      linked.add(fact.key);
+      return ` [${change}](${changeHref(fact.key)})`;
+    },
     unknownMarker: (key) => key === void 0 ? `**${marker}**` : `**[${marker}](${answerHref(key)})**`,
     unknownItem: (key, question) => `- ${locale === "en" ? plainPrompt(question) : question} - [${answer}](${answerHref(key)})`
   };
@@ -36909,6 +36923,7 @@ async function fileExists(path2) {
 // packages/cli/src/commands/mcp.ts
 import { existsSync as existsSync2, statSync } from "node:fs";
 import { isAbsolute as isAbsolute2 } from "node:path";
+import { fileURLToPath as fileURLToPath3 } from "node:url";
 
 // node_modules/zod/v3/helpers/util.js
 var util;
@@ -46521,7 +46536,7 @@ function readVersion(relative3) {
 }
 function compliifyVersion() {
   if (true) {
-    return "0.4.1";
+    return "0.5.0";
   }
   return readVersion("../../../plugin/.claude-plugin/plugin.json") ?? readVersion("../package.json") ?? "0.0.0";
 }
@@ -46589,8 +46604,38 @@ function workspaceFor(sessionDir, projectDir) {
 var projectDirField = external_exports.string().optional().describe(
   "Absolute path of the git repository to work on. Leave it out unless the tool answers that the folder of this session is not a git repository."
 );
+async function clientRoots(server) {
+  if (server.server.getClientCapabilities()?.roots === void 0) return [];
+  try {
+    const { roots } = await server.server.listRoots(void 0, { timeout: 2e3 });
+    const dirs = [];
+    for (const root of roots) {
+      if (!root.uri.startsWith("file://")) continue;
+      try {
+        dirs.push(fileURLToPath3(root.uri));
+      } catch {
+      }
+    }
+    return dirs;
+  } catch {
+    return [];
+  }
+}
 function buildMcpServer(repoDir) {
   const server = new McpServer({ name: "compliify", version: compliifyVersion() });
+  const workspace = async (projectDir) => {
+    try {
+      return workspaceFor(repoDir, projectDir);
+    } catch (err) {
+      if (projectDir === void 0 || projectDir === "") {
+        for (const dir of await clientRoots(server)) {
+          const root = gitToplevel(dir);
+          if (root !== void 0) return { root, paths: compliifyPaths(root) };
+        }
+      }
+      throw err;
+    }
+  };
   server.registerTool(
     "get_open_questions",
     {
@@ -46599,7 +46644,7 @@ function buildMcpServer(repoDir) {
     },
     async ({ project_dir: projectDir }) => {
       try {
-        const { paths } = workspaceFor(repoDir, projectDir);
+        const { paths } = await workspace(projectDir);
         const file2 = await readFactFile(paths.factsPath);
         const open2 = governanceFirst(openQuestionEntries(file2, registry2)).map((entry) => {
           const def = resolveFactKey(entry.key);
@@ -46650,7 +46695,7 @@ function buildMcpServer(repoDir) {
     },
     async ({ key, value, project_dir: projectDir }) => {
       try {
-        const { root, paths } = workspaceFor(repoDir, projectDir);
+        const { root, paths } = await workspace(projectDir);
         const def = resolveFactKey(key);
         if (def === void 0) {
           return errorText(
@@ -46737,7 +46782,7 @@ function buildMcpServer(repoDir) {
     },
     async ({ rule_id: ruleId, project_dir: projectDir }) => {
       try {
-        const { paths } = workspaceFor(repoDir, projectDir);
+        const { paths } = await workspace(projectDir);
         const rules = loadRulePack();
         const rule = rules.find((r) => r.id === ruleId);
         if (rule === void 0) {
@@ -46788,7 +46833,7 @@ Rule intent: ${rule.because.rationale} - ${rule.because.citation}`
     },
     async ({ format, project_dir: projectDir }) => {
       try {
-        const { root, paths } = workspaceFor(repoDir, projectDir);
+        const { root, paths } = await workspace(projectDir);
         const file2 = await readFactFile(paths.factsPath);
         const graph = buildArchitectureGraph(file2, {
           isStale: makeStaleCheck(root, file2)
@@ -46820,7 +46865,7 @@ ${renderArchitectureText(graph)}`
     },
     async ({ container, format, project_dir: projectDir }) => {
       try {
-        const { root } = workspaceFor(repoDir, projectDir);
+        const { root } = await workspace(projectDir);
         return text(await runStructure({ cwd: root, format: format ?? "text", ...container !== void 0 ? { container } : {} }));
       } catch (err) {
         return errorText(`get_code_structure failed: ${asMessage(err)}`);
@@ -46838,7 +46883,7 @@ ${renderArchitectureText(graph)}`
     },
     async ({ format, project_dir: projectDir }) => {
       try {
-        const { root } = workspaceFor(repoDir, projectDir);
+        const { root } = await workspace(projectDir);
         return text(await runCheck({ cwd: root, format: format ?? "text" }));
       } catch (err) {
         return errorText(`run_check failed: ${asMessage(err)}`);
@@ -46856,7 +46901,7 @@ ${renderArchitectureText(graph)}`
     },
     async ({ lang, project_dir: projectDir }) => {
       try {
-        const { root } = workspaceFor(repoDir, projectDir);
+        const { root } = await workspace(projectDir);
         return text(await runReport({ cwd: root, lang: lang ?? "de" }));
       } catch (err) {
         return errorText(`get_report failed: ${asMessage(err)}`);
@@ -46877,7 +46922,7 @@ ${renderArchitectureText(graph)}`
     },
     async ({ base: base2, head, format, project_dir: projectDir }) => {
       try {
-        const { root } = workspaceFor(repoDir, projectDir);
+        const { root } = await workspace(projectDir);
         return text(
           await runDiff({
             cwd: root,
@@ -47195,6 +47240,9 @@ ${leftOutNote(reduced.leftOut)}`;
 // packages/cli/src/commands/push.ts
 import { execFileSync as execFileSync3 } from "node:child_process";
 
+// packages/cli/src/server-url.ts
+var DEFAULT_SERVER_URL = "https://compliify.rr42.de";
+
 // packages/cli/src/ingest-bundle.ts
 var MAX_BUNDLE_FACTS = 1e3;
 function buildIngestBundle(file2, context) {
@@ -47223,14 +47271,10 @@ function buildIngestBundle(file2, context) {
 var LOCAL_HOSTS = /* @__PURE__ */ new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 var REQUEST_TIMEOUT_MS = 3e4;
 function resolveServerUrl(raw) {
-  if (raw === void 0 || raw.trim() === "") {
-    throw new Error(
-      "no server given: pass --server <url> or set COMPLIIFY_SERVER_URL"
-    );
-  }
+  const given = raw === void 0 || raw.trim() === "" ? DEFAULT_SERVER_URL : raw.trim();
   let url2;
   try {
-    url2 = new URL(raw.trim());
+    url2 = new URL(given);
   } catch {
     throw new Error(`not a valid server URL: ${raw}`);
   }
@@ -47287,7 +47331,9 @@ async function runPush(opts) {
   if (opts.dryRun === true) {
     return `dry run - would push ${summarize(bundle)}; nothing was sent`;
   }
-  const server = resolveServerUrl(opts.server ?? env["COMPLIIFY_SERVER_URL"]);
+  const requested = opts.server ?? env["COMPLIIFY_SERVER_URL"];
+  const server = resolveServerUrl(requested);
+  const isDefault = requested === void 0 || requested.trim() === "";
   const token = env["COMPLIIFY_TOKEN"] ?? "";
   if (token === "") {
     throw new Error(
@@ -47326,7 +47372,7 @@ async function runPush(opts) {
     }
   } catch {
   }
-  return `pushed ${summarize(bundle)} to ${server} (HTTP ${response.status})${detail}`;
+  return `pushed ${summarize(bundle)} to ${server}${isDefault ? " (the built-in server: --server or COMPLIIFY_SERVER_URL for your own)" : ""} (HTTP ${response.status})${detail}`;
 }
 
 // packages/cli/src/content.ts
@@ -47337,7 +47383,7 @@ import { dirname as dirname3, join as join6 } from "node:path";
 // packages/cli/src/extract/skill.ts
 import { existsSync as existsSync3, readFileSync as readFileSync6 } from "node:fs";
 import { join as join5 } from "node:path";
-import { fileURLToPath as fileURLToPath3 } from "node:url";
+import { fileURLToPath as fileURLToPath4 } from "node:url";
 var SKILL_REL_PATH = "skills/extract-facts/SKILL.md";
 function candidates() {
   const list = [];
@@ -47347,9 +47393,9 @@ function candidates() {
   if (pluginRoot !== void 0 && pluginRoot !== "") {
     list.push(join5(pluginRoot, SKILL_REL_PATH));
   }
-  list.push(fileURLToPath3(new URL(`../${SKILL_REL_PATH}`, import.meta.url)));
+  list.push(fileURLToPath4(new URL(`../${SKILL_REL_PATH}`, import.meta.url)));
   list.push(
-    fileURLToPath3(new URL(`../../../../plugin/${SKILL_REL_PATH}`, import.meta.url))
+    fileURLToPath4(new URL(`../../../../plugin/${SKILL_REL_PATH}`, import.meta.url))
   );
   return list;
 }
@@ -49128,6 +49174,7 @@ async function runScan(opts, runner = runClaude) {
 }
 
 // packages/cli/src/commands/setup-ci.ts
+import { existsSync as existsSync4 } from "node:fs";
 import { mkdir as mkdir3, readFile as readFile5, writeFile as writeFile7 } from "node:fs/promises";
 import { dirname as dirname6, join as join8 } from "node:path";
 var WORKFLOW_PATH = ".github/workflows/compliify.yml";
@@ -49224,18 +49271,26 @@ async function readIfExists(path2) {
   }
 }
 async function runSetupCi(opts) {
-  const serverUrl = opts.serverUrl !== void 0 ? cleanUrl(opts.serverUrl, "--server-url") : void 0;
-  const consoleUrl = opts.consoleUrl !== void 0 ? cleanUrl(opts.consoleUrl, "--console-url") : void 0;
+  if (opts.noServer === true && opts.serverUrl !== void 0) {
+    throw new Error("--no-server cannot be combined with --server-url");
+  }
+  const usesDefaultServer = opts.noServer !== true && opts.serverUrl === void 0;
+  const serverUrl = opts.noServer === true ? void 0 : cleanUrl(opts.serverUrl ?? DEFAULT_SERVER_URL, "--server-url");
+  const consoleUrl = opts.consoleUrl !== void 0 ? cleanUrl(opts.consoleUrl, "--console-url") : usesDefaultServer ? serverUrl : void 0;
   const action = actionReference(opts.action);
+  if (opts.scan === false && opts.architecture === true) {
+    throw new Error("--no-scan cannot be combined with --architecture: the survey is a scan");
+  }
+  const scan = opts.scan !== false;
+  const architecture = scan && opts.architecture !== false;
   const root = resolveRepoRoot(opts.cwd);
   const path2 = join8(root, WORKFLOW_PATH);
   const defaultBranch = defaultBranchName(root);
-  const scan = opts.scan === true || opts.architecture === true;
   const workflow = renderWorkflow({
     action,
     defaultBranch,
     scan,
-    architecture: opts.architecture === true,
+    architecture,
     ...serverUrl !== void 0 ? { serverUrl } : {},
     ...consoleUrl !== void 0 ? { consoleUrl } : {}
   });
@@ -49260,28 +49315,377 @@ async function runSetupCi(opts) {
   await writeFile7(path2, workflow, "utf8");
   const triggers = serverUrl !== void 0 ? `pull_request, push to ${defaultBranch}` : "pull_request";
   const secrets = [
-    ...scan ? ["  gh secret set ANTHROPIC_API_KEY       # your own key: the scan in CI is billed to it"] : [],
-    ...serverUrl !== void 0 ? ["  gh secret set COMPLIIFY_TOKEN         # the compliify API token (cpfy_...) for the server above"] : []
+    ...scan ? [
+      "  gh secret set ANTHROPIC_API_KEY       # your own key: the scan in CI is billed to it",
+      "                                        # Until it is set the check still runs; it just creates no facts itself."
+    ] : [],
+    ...serverUrl !== void 0 ? [
+      "  gh secret set COMPLIIFY_TOKEN         # the compliify API token (cpfy_...) for the server above",
+      `                                        # create one in the console: ${consoleUrl ?? serverUrl}/settings (shown once).`,
+      "                                        # Until it is set the check still runs; it just does not send facts."
+    ] : []
   ];
   return [
     `Wrote ${WORKFLOW_PATH}`,
     `  runs on: ${triggers}`,
     `  action:  ${action}`,
-    ...serverUrl !== void 0 ? [`  server:  ${serverUrl}`] : [],
+    ...serverUrl !== void 0 ? [`  server:  ${serverUrl}${usesDefaultServer ? " (the default; --server-url for another, --no-server for none)" : ""}`] : [],
     ...consoleUrl !== void 0 ? [`  console: ${consoleUrl}`] : [],
-    ...opts.architecture === true ? ["  survey:  whole-repository architecture on every run"] : [],
-    scan ? "  tokens:  the scan in CI uses your ANTHROPIC_API_KEY; the plugin's capture still runs in each developer's own Claude" : "  tokens:  none are spent in CI; the facts come from .compliify/facts.json, captured in each developer's own Claude",
+    ...architecture ? ["  survey:  whole-repository architecture on every run (--no-architecture to scan only the changed files)"] : [],
+    scan ? "  tokens:  CI creates facts itself with your ANTHROPIC_API_KEY (billed to it; --no-scan for none); the plugin's capture still runs in each developer's own Claude" : "  tokens:  none are spent in CI; the facts come from .compliify/facts.json, captured in each developer's own Claude",
     "",
     ...secrets.length > 0 ? ["Next steps (the secrets are repository secrets; gh asks for the value, nothing is echoed):", ...secrets] : ["Next steps (no secret is needed):"],
-    `  git add ${WORKFLOW_PATH} && git commit -m "Add compliify governance check" && git push`,
-    "  Commit .compliify/facts.json as well: it is what the workflow reads.",
+    `  compliify setup publish   # commits ${WORKFLOW_PATH} (and .compliify/facts.json) and pushes the current branch`,
+    "  .compliify/facts.json is what the workflow reads; publish includes it once it exists.",
+    ...existsSync4(compliifyPaths(root).factsPath) ? [] : [
+      "  No facts are recorded yet, so the workflow would have nothing to send: `compliify setup facts` and `compliify scan --architecture` record them (/compliify:setup does both, and the push)."
+    ],
     ...serverUrl === void 0 ? ["  To push the facts to a compliify server too, run this again with --server-url (and --force)."] : []
   ].join("\n");
 }
 
+// packages/cli/src/extract/identity.ts
+import { lstatSync, readFileSync as readFileSync11 } from "node:fs";
+import { join as join9 } from "node:path";
+var MAX_NAME = 120;
+var MAX_DESCRIPTION = 500;
+var MAX_FILE_BYTES2 = 512 * 1024;
+var README_LINES = 80;
+var PLACEHOLDER_TITLE = /^(readme|project title|project name|your project( name)?|project|untitled|title|todo|welcome|my project|my app)$/i;
+function readRegular(root, relative3) {
+  const path2 = join9(root, relative3);
+  try {
+    const stat2 = lstatSync(path2);
+    if (!stat2.isFile() || stat2.size > MAX_FILE_BYTES2) return void 0;
+    return readFileSync11(path2, "utf8");
+  } catch {
+    return void 0;
+  }
+}
+function plainText(markdown) {
+  return markdown.replace(/!\[[^\]]*\]\([^)]*\)/g, "").replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/<[^>]*>/g, "").replace(/[`*]/g, "").replace(/\s+/g, " ").trim();
+}
+function readmeTitle(root) {
+  for (const name of ["README.md", "readme.md", "Readme.md", "README.markdown"]) {
+    const text2 = readRegular(root, name);
+    if (text2 === void 0) continue;
+    const lines = text2.split(/\r?\n/).slice(0, README_LINES);
+    let fenced = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (/^\s*(```|~~~)/.test(line)) {
+        fenced = !fenced;
+        continue;
+      }
+      if (fenced) continue;
+      const atx = /^#\s+(.+?)\s*#*\s*$/.exec(line);
+      const setext = atx === null && line.trim() !== "" && /^=+\s*$/.test(lines[i + 1] ?? "x") ? line : void 0;
+      const raw = atx?.[1] ?? setext;
+      if (raw === void 0) continue;
+      const value = plainText(raw);
+      if (value === "" || value.length > MAX_NAME || PLACEHOLDER_TITLE.test(value)) return void 0;
+      return { value, source: `${name}:${i + 1}` };
+    }
+  }
+  return void 0;
+}
+function jsonLine(text2, key, value) {
+  const lines = text2.split(/\r?\n/);
+  const encoded = JSON.stringify(value);
+  const at = lines.findIndex((l) => l.includes(`"${key}"`) && l.includes(encoded));
+  return at === -1 ? 1 : at + 1;
+}
+function packageJson(root) {
+  const text2 = readRegular(root, "package.json");
+  if (text2 === void 0) return {};
+  let parsed;
+  try {
+    parsed = JSON.parse(text2);
+  } catch {
+    return {};
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
+  const record2 = parsed;
+  const out = {};
+  for (const key of ["name", "description"]) {
+    const value = record2[key];
+    if (typeof value === "string" && value.trim() !== "") {
+      out[key] = { value: value.trim(), source: `package.json:${jsonLine(text2, key, value)}` };
+    }
+  }
+  return out;
+}
+function toml(root, file2, sections) {
+  const text2 = readRegular(root, file2);
+  if (text2 === void 0) return {};
+  const out = {};
+  let section = "";
+  const lines = text2.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    const header = /^\[([^\]]+)\]\s*(#.*)?$/.exec(line);
+    if (header !== null) {
+      section = header[1].trim();
+      continue;
+    }
+    if (!sections.includes(section)) continue;
+    const entry = /^(name|description)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|'([^']*)')\s*(#.*)?$/.exec(line);
+    if (entry === null) continue;
+    const key = entry[1];
+    let value = entry[3] ?? entry[2];
+    if (entry[2] !== void 0) {
+      try {
+        value = JSON.parse(`"${entry[2]}"`);
+      } catch {
+        value = entry[2];
+      }
+    }
+    if (value.trim() !== "" && out[key] === void 0) {
+      out[key] = { value: value.trim(), source: `${file2}:${i + 1}` };
+    }
+  }
+  return out;
+}
+var NO_REPLY = /(^|[.@])noreply\b|@users\.noreply\./i;
+function detectIdentity(root) {
+  const out = [];
+  const pkg2 = packageJson(root);
+  const py = toml(root, "pyproject.toml", ["project", "tool.poetry"]);
+  const cargo = toml(root, "Cargo.toml", ["package"]);
+  const title = readmeTitle(root);
+  const technicalName = [pkg2.name, py.name, cargo.name].find(
+    (c) => c !== void 0 && c.value.length <= MAX_NAME
+  );
+  if (title !== void 0) {
+    out.push({ key: "identity.system_name", value: title.value, provenance: "detected", source: title.source, confidence: "high" });
+  } else if (technicalName !== void 0) {
+    out.push({ key: "identity.system_name", value: technicalName.value, provenance: "detected", source: technicalName.source, confidence: "medium" });
+  }
+  const description = [pkg2.description, py.description, cargo.description].find(
+    (c) => c !== void 0 && c.value.length <= MAX_DESCRIPTION && !/[\r\n]/.test(c.value)
+  );
+  if (description !== void 0) {
+    out.push({ key: "identity.description", value: description.value, provenance: "detected", source: description.source, confidence: "medium" });
+  }
+  const email3 = gitUserEmail(root);
+  if (email3 !== void 0 && email3.length <= MAX_NAME && email3.includes("@") && !NO_REPLY.test(email3)) {
+    out.push({ key: "identity.owner", value: email3, provenance: "inferred", confidence: "low" });
+  }
+  return out;
+}
+
+// packages/cli/src/commands/setup-facts.ts
+var LABEL = {
+  "identity.system_name": "system name",
+  "identity.description": "description",
+  "identity.owner": "owner"
+};
+function describe3(fact) {
+  const how = fact.provenance === "detected" ? `found at ${fact.source ?? "the repository"}` : "a best guess from git config user.email - please confirm";
+  return `  ${LABEL[fact.key]}: ${fact.value} (${how})`;
+}
+async function runSetupFacts(opts) {
+  const root = resolveRepoRoot(opts.cwd);
+  const paths = compliifyPaths(root);
+  const found = detectIdentity(root);
+  const latest = await readFactFile(paths.factsPath);
+  const active = activeFacts(latest);
+  const fresh = found.filter((f) => {
+    const current = active.get(f.key);
+    return current === void 0 || isUnknownFact(current);
+  });
+  if (fresh.length === 0) {
+    return found.length === 0 ? "Nothing to record yet: the repository states no name or description of its own (a README title, a package.json or pyproject.toml would) and git has no usable user.email." : `Nothing new: ${found.map((f) => LABEL[f.key]).join(", ")} ${found.length === 1 ? "is" : "are"} already recorded.`;
+  }
+  const asOf = defaultAsOf(root);
+  const at = nowIso();
+  const envelopes = fresh.map((f) => ({
+    key: f.key,
+    value: f.value,
+    provenance: f.provenance,
+    ...f.source !== void 0 ? { source: f.source } : {},
+    confidence: f.confidence,
+    as_of: asOf,
+    at,
+    status: "proposed"
+  }));
+  const { valid, rejected } = validateFacts(envelopes, registry2, families);
+  const lines = [];
+  if (valid.length > 0) {
+    await ensureCompliifyDir(paths.dir);
+    const system = latest.system !== "" ? latest.system : systemSlugFor(root);
+    await writeFactsSuperseding(paths.factsPath, valid, { system });
+    const written = new Set(valid.map((f) => f.key));
+    lines.push(
+      `Recorded ${valid.length} fact${valid.length === 1 ? "" : "s"} the repository states itself (proposed - a person confirms them in the console):`,
+      ...fresh.filter((f) => written.has(f.key)).map(describe3)
+    );
+  }
+  for (const r of rejected) lines.push(`  rejected: ${r.error}`);
+  return lines.join("\n");
+}
+
+// packages/cli/src/commands/setup-publish.ts
+import { spawnSync } from "node:child_process";
+import { existsSync as existsSync5 } from "node:fs";
+import { join as join10 } from "node:path";
+var PUBLISHED_PATHS = [
+  ".claude/settings.json",
+  ".github/workflows/compliify.yml",
+  ".compliify/facts.json"
+];
+var DEFAULT_PUBLISH_MESSAGE = "chore: set up the compliify plugin and governance check";
+function git2(cwd, args) {
+  const res = spawnSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    maxBuffer: GIT_MAX_BUFFER,
+    // Nobody can type at a prompt here: fail instead of waiting for one.
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  return {
+    ok: res.status === 0,
+    stdout: (res.stdout ?? "").trim(),
+    raw: res.stdout ?? "",
+    stderr: (res.stderr ?? (res.error !== void 0 ? String(res.error.message) : "")).trim()
+  };
+}
+function gitWords(res) {
+  const lines = `${res.stderr}
+${res.stdout}`.split("\n").map((l) => l.trim()).filter((l) => l !== "");
+  return lines.slice(-8).join("\n");
+}
+function withoutCredentials(url2) {
+  return url2.replace(/^([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^/@\s]*@/, "$1");
+}
+function chooseRemote(root, wanted) {
+  const remotes = git2(root, ["remote"]).stdout.split("\n").filter((r) => r !== "");
+  if (wanted !== void 0) {
+    if (!remotes.includes(wanted)) {
+      throw new Error(
+        `no remote called "${wanted}"${remotes.length > 0 ? ` (this repository has: ${remotes.join(", ")})` : ""}`
+      );
+    }
+    return wanted;
+  }
+  if (remotes.includes("origin")) return "origin";
+  if (remotes.length === 1) return remotes[0];
+  if (remotes.length === 0) {
+    throw new Error(
+      "this repository has no remote to push to. Add one (git remote add origin <url>) and run `compliify setup publish` again."
+    );
+  }
+  throw new Error(
+    `this repository has several remotes (${remotes.join(", ")}) and none is called origin. Say which one: compliify setup publish --remote <name>`
+  );
+}
+function changedPaths(root, paths) {
+  const res = git2(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ...paths]);
+  if (!res.ok) throw new Error(`git status failed:
+${gitWords(res)}`);
+  const out = [];
+  const entries = res.raw.split("\0").filter((e) => e !== "");
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    out.push(entry.slice(3));
+    if (entry[0] === "R" || entry[0] === "C") i++;
+  }
+  return out;
+}
+function remoteLacks(root, remote, branch, paths) {
+  const tracked = paths.filter((p) => git2(root, ["ls-files", "--error-unmatch", "--", p]).ok);
+  if (tracked.length === 0) return false;
+  const ref2 = `refs/remotes/${remote}/${branch}`;
+  if (!git2(root, ["rev-parse", "--verify", "--quiet", ref2]).ok) return true;
+  return !git2(root, ["diff", "--quiet", ref2, "HEAD", "--", ...tracked]).ok;
+}
+function pushFailure(res, remote, branch) {
+  const words2 = gitWords(res);
+  const text2 = `${res.stderr}
+${res.stdout}`;
+  const kept = "The commit is safe in your local repository.";
+  if (/protected branch|GH006|GH013|pre-receive hook declined|push declined/i.test(text2)) {
+    return new Error(
+      `${remote} does not accept a direct push to ${branch} (it is protected).
+${words2}
+${kept} Put it on a branch and open a pull request: git switch -c compliify-setup && compliify setup publish`
+    );
+  }
+  if (/non-fast-forward|fetch first|\[rejected\]|\[remote rejected\]|updates were rejected/i.test(text2)) {
+    return new Error(
+      `${remote} already has commits on ${branch} that this branch does not have, so the push was refused. Nothing was forced.
+${words2}
+${kept} Bring them in (git pull --rebase ${remote} ${branch}) and run \`compliify setup publish\` again.`
+    );
+  }
+  return new Error(
+    `could not push ${branch} to ${remote}:
+${words2}
+${kept} Fix the above (access to ${remote}?) and run \`compliify setup publish\` again: it only pushes.`
+  );
+}
+async function runSetupPublish(opts) {
+  const message = (opts.message ?? DEFAULT_PUBLISH_MESSAGE).trim();
+  if (message === "") throw new Error("the commit message is empty");
+  const top = git2(opts.cwd, ["rev-parse", "--show-toplevel"]);
+  if (!top.ok || top.stdout === "") throw new Error("this is not a git repository - nothing to publish");
+  const root = top.stdout;
+  const branchRes = git2(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+  if (!branchRes.ok || branchRes.stdout === "") {
+    throw new Error("HEAD is detached (no branch is checked out). Check out a branch, then run `compliify setup publish` again.");
+  }
+  const branch = branchRes.stdout;
+  const present = PUBLISHED_PATHS.filter((p) => existsSync5(join10(root, p)));
+  if (present.length === 0) {
+    return "Nothing to publish: setup has not written .claude/settings.json or .github/workflows/compliify.yml here. Run `compliify setup team` or `compliify setup ci` first.";
+  }
+  const remote = chooseRemote(root, opts.remote);
+  const url2 = withoutCredentials(git2(root, ["remote", "get-url", remote]).stdout);
+  const changed = changedPaths(root, present);
+  const needsPush = changed.length > 0 || remoteLacks(root, remote, branch, present);
+  if (!needsPush) {
+    return `Nothing to do: ${present.join(", ")} ${present.length === 1 ? "is" : "are"} already committed and on ${remote}/${branch}.`;
+  }
+  if (opts.dryRun === true) {
+    return [
+      changed.length > 0 ? `Would commit these files ("${message}"), and nothing else:` : "Nothing new to commit; the files below are committed but not on the remote yet:",
+      ...(changed.length > 0 ? changed : present).map((p) => `  ${p}`),
+      `Would push ${branch} to ${remote} (${url2}) as ${remote}/${branch} and track it there.`
+    ].join("\n");
+  }
+  const lines = [];
+  if (changed.length > 0) {
+    const added = git2(root, ["add", "--", ...changed]);
+    if (!added.ok) throw new Error(`git add failed:
+${gitWords(added)}`);
+    const committed = git2(root, ["commit", "--quiet", "-m", message, "--", ...changed]);
+    if (!committed.ok) {
+      throw new Error(
+        `git commit failed:
+${gitWords(committed)}
+Nothing was pushed. The files are staged (${changed.join(", ")}); fix the above and run \`compliify setup publish\` again.`
+      );
+    }
+    const sha = git2(root, ["rev-parse", "--short", "HEAD"]).stdout;
+    lines.push(`Committed ${sha} "${message}":`, ...changed.map((p) => `  ${p}`));
+  } else {
+    lines.push("Nothing new to commit: the files were committed earlier but never reached the remote.");
+  }
+  const before = git2(root, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]);
+  const pushed = git2(root, ["push", "--set-upstream", remote, `HEAD:refs/heads/${branch}`]);
+  if (!pushed.ok) throw pushFailure(pushed, remote, branch);
+  const was = before.ok && before.stdout !== `${remote}/${branch}` ? ` (it tracked ${before.stdout} before)` : "";
+  lines.push(`Pushed ${branch} to ${remote} (${url2}); it now tracks ${remote}/${branch}${was}.`);
+  const link = `${pushed.stderr}
+${pushed.stdout}`.split("\n").find((l) => /^remote:\s+\S*https?:\/\//.test(l.trim()));
+  if (link !== void 0) lines.push(link.replace(/^remote:\s*/, "").trim());
+  return lines.join("\n");
+}
+
 // packages/cli/src/commands/setup-team.ts
 import { mkdir as mkdir4, readFile as readFile6, writeFile as writeFile8 } from "node:fs/promises";
-import { dirname as dirname7, join as join9 } from "node:path";
+import { dirname as dirname7, join as join11 } from "node:path";
 var DEFAULT_MARKETPLACE_REPO = "rr42-hq/compliify-marketplace";
 var DEFAULT_MARKETPLACE_NAME = "compliify";
 var PLUGIN_NAME = "compliify";
@@ -49369,7 +49773,7 @@ async function runSetupTeam(opts) {
   const name = opts.marketplaceName ?? DEFAULT_MARKETPLACE_NAME;
   validate(repo, name);
   const root = resolveRepoRoot(opts.cwd);
-  const path2 = join9(root, SETTINGS_PATH);
+  const path2 = join11(root, SETTINGS_PATH);
   let raw;
   try {
     raw = await readFile6(path2, "utf8");
@@ -49410,13 +49814,13 @@ async function runSetupTeam(opts) {
     `Wrote ${SETTINGS_PATH}`,
     ...merged.changes.map((c) => `  ${c}`),
     "",
-    `Commit it. Everyone who opens this repository in Claude Code is asked once to trust the folder; after that Claude Code adds the marketplace and the ${PLUGIN_NAME} plugin for them (a restart or /reload-plugins activates it once the download has finished).`
+    `Get it into the repository with \`compliify setup publish\` (commits only this file and pushes the current branch). Everyone who opens this repository in Claude Code is asked once to trust the folder; after that Claude Code adds the marketplace and the ${PLUGIN_NAME} plugin for them (a restart or /reload-plugins activates it once the download has finished).`
   ].join("\n");
 }
 
 // packages/cli/src/commands/setup.ts
 function registerSetupCommands(program2, operational2) {
-  const setup = program2.command("setup").description("One-time setup for a team or for CI (recording facts needs neither)");
+  const setup = program2.command("setup").description("One-time setup for a team or for CI, and publishing it (recording facts needs none of it)");
   setup.command("team").description(
     "Make Claude Code offer the compliify plugin to everyone who opens this repository (merges into .claude/settings.json)"
   ).option(
@@ -49432,19 +49836,41 @@ function registerSetupCommands(program2, operational2) {
       })
     )
   );
-  setup.command("ci").description("Write .github/workflows/compliify.yml: the governance check on pull requests").option("--server-url <url>", "compliify server to push facts to (adds a push trigger on the default branch)").option("--console-url <url>", "console of that server, for links in the pull request comment").option(
+  setup.command("ci").description("Write .github/workflows/compliify.yml: the governance check on pull requests").option(
+    "--server-url <url>",
+    "compliify server to push facts to, with a push trigger on the default branch (default: https://compliify.rr42.de)"
+  ).option("--no-server", "send no facts to any server: the workflow only checks the committed facts").option("--console-url <url>", "console of that server, for links in the pull request comment (default: the default server's)").option(
     "--scan",
-    "also scan the changed files in CI with headless Claude (needs your own ANTHROPIC_API_KEY secret; the tokens are billed to it). Without it the workflow calls no model"
-  ).option("--architecture", "survey the whole repository for architecture on every run (slower; implies --scan)").option("--action <ref>", "action reference: a ref such as v0, or owner/repo/path@ref").option("--force", "overwrite an existing workflow file").option("--dry-run", "print the workflow without writing it").action(
+    "scan the changed files in CI with headless Claude, so CI creates facts itself (the default; needs your own ANTHROPIC_API_KEY secret, the tokens are billed to it)"
+  ).option("--no-scan", "call no model in CI: the workflow only checks the committed facts").option(
+    "--architecture",
+    "survey the whole repository for architecture on every run (the default; slower, more API quota; implies --scan)"
+  ).option("--no-architecture", "only scan the changed files; no whole-repository survey on every run").option("--action <ref>", "action reference: a ref such as v0, or owner/repo/path@ref").option("--force", "overwrite an existing workflow file").option("--dry-run", "print the workflow without writing it").action(
     (opts) => operational2(
       () => runSetupCi({
         cwd: process.cwd(),
         ...opts.serverUrl !== void 0 ? { serverUrl: opts.serverUrl } : {},
+        ...opts.server === false ? { noServer: true } : {},
         ...opts.consoleUrl !== void 0 ? { consoleUrl: opts.consoleUrl } : {},
-        ...opts.scan === true ? { scan: true } : {},
-        ...opts.architecture === true ? { architecture: true } : {},
+        ...opts.scan !== void 0 ? { scan: opts.scan } : {},
+        ...opts.architecture !== void 0 ? { architecture: opts.architecture } : {},
         ...opts.action !== void 0 ? { action: opts.action } : {},
         ...opts.force === true ? { force: true } : {},
+        ...opts.dryRun === true ? { dryRun: true } : {}
+      })
+    )
+  );
+  setup.command("facts").description(
+    "Record what the repository itself states, right away and without a model: its name and description (cited) and, as a best guess, its owner from git. Proposed, never confirmed"
+  ).action(() => operational2(() => runSetupFacts({ cwd: process.cwd() })));
+  setup.command("publish").description(
+    "Commit what `setup team` / `setup ci` wrote (only those files) and push the current branch to the remote, by name"
+  ).option("--remote <name>", "remote to push to (default: origin, or the only remote)").option("--message <text>", "commit message").option("--dry-run", "say what would be committed and pushed, and do neither").action(
+    (opts) => operational2(
+      () => runSetupPublish({
+        cwd: process.cwd(),
+        ...opts.remote !== void 0 ? { remote: opts.remote } : {},
+        ...opts.message !== void 0 ? { message: opts.message } : {},
         ...opts.dryRun === true ? { dryRun: true } : {}
       })
     )
@@ -49584,7 +50010,7 @@ async function runStatus(opts) {
 
 // packages/cli/src/hook/session-start.ts
 import { mkdirSync as mkdirSync2, writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join10 } from "node:path";
+import { join as join12 } from "node:path";
 
 // packages/cli/src/hook/stdin.ts
 async function readStdin(maxMs = 5e3) {
@@ -49640,7 +50066,7 @@ function claimWelcome(dataDir = process.env["CLAUDE_PLUGIN_DATA"]) {
   try {
     mkdirSync2(dataDir, { recursive: true });
     writeFileSync2(
-      join10(dataDir, WELCOME_MARKER),
+      join12(dataDir, WELCOME_MARKER),
       `${JSON.stringify({ welcomed_at: nowIso(), version: compliifyVersion() })}
 `,
       { encoding: "utf8", flag: "wx" }
@@ -49730,13 +50156,14 @@ async function sessionStartHookMain() {
 }
 
 // packages/cli/src/hook/stop.ts
-import { readFile as readFile7, rm } from "node:fs/promises";
-import { isAbsolute as isAbsolute3, join as join11, relative as relative2, sep as sep3 } from "node:path";
+import { existsSync as existsSync6 } from "node:fs";
+import { readFile as readFile7, rm, writeFile as writeFile9 } from "node:fs/promises";
+import { isAbsolute as isAbsolute3, join as join13, relative as relative2, sep as sep3 } from "node:path";
 var MAX_QUESTIONS_SURFACED = 2;
 function toRepoRelative(root, rawPath) {
   const trimmed = rawPath.trim();
   if (trimmed === "") return void 0;
-  const abs = isAbsolute3(trimmed) ? trimmed : join11(root, trimmed);
+  const abs = isAbsolute3(trimmed) ? trimmed : join13(root, trimmed);
   const rel = relative2(root, abs);
   if (rel === "" || rel.startsWith("..") || isAbsolute3(rel)) return void 0;
   return rel.split(sep3).join("/");
@@ -49946,10 +50373,38 @@ async function runStopHook(payload, runner = runClaude) {
     }
   });
 }
+var CAPTURE_ERROR_FILE = "capture-error.json";
+var SAME_SESSION_FALLBACK_MS = 6 * 60 * 60 * 1e3;
+async function reportCaptureFailure(payload, err) {
+  const reason = (err instanceof Error ? err.message : String(err)).replace(/\s+/g, " ").trim().slice(0, 300);
+  const paths = compliifyPaths(resolveRepoRoot(hookCwd(payload)));
+  const file2 = join13(paths.dir, CAPTURE_ERROR_FILE);
+  const session = typeof payload["session_id"] === "string" ? payload["session_id"] : "";
+  let told = {};
+  try {
+    told = JSON.parse(await readFile7(file2, "utf8"));
+  } catch {
+  }
+  const sameSession = session !== "" ? told.session === session : told.at !== void 0 && Date.now() - Date.parse(told.at) < SAME_SESSION_FALLBACK_MS;
+  if (told.message === reason && sameSession) return void 0;
+  if (existsSync6(paths.dir)) {
+    try {
+      const record2 = { session, message: reason, at: nowIso() };
+      await writeFile9(file2, `${JSON.stringify(record2)}
+`, "utf8");
+    } catch {
+    }
+  }
+  return JSON.stringify({
+    suppressOutput: true,
+    systemMessage: `compliify: the facts from this session's edits could not be recorded automatically - ${reason}. The files edited in this session were not scanned; \`compliify scan\` (/compliify:scan in Claude Code) records them, and shows the same reason if it still cannot run. Told once per session.`
+  });
+}
 async function stopHookMain(runner = runClaude) {
   if (process.env["COMPLIIFY_EXTRACTION"] === "1") return;
+  let payload = {};
   try {
-    const payload = parseHookPayload(await readStdin());
+    payload = parseHookPayload(await readStdin());
     const output = await runStopHook(payload, runner);
     if (output !== void 0) process.stdout.write(`${output}
 `);
@@ -49958,6 +50413,12 @@ async function stopHookMain(runner = runClaude) {
       `compliify stop hook: ${err instanceof Error ? err.message : String(err)}
 `
     );
+    try {
+      const told = await reportCaptureFailure(payload, err);
+      if (told !== void 0) process.stdout.write(`${told}
+`);
+    } catch {
+    }
   }
 }
 
@@ -50099,7 +50560,7 @@ function buildProgram() {
   );
   program2.command("push").description(
     "Send the active facts to a compliify server (POST /v1/ingest) from this machine, labelled origin=local. Token: $COMPLIIFY_TOKEN"
-  ).option("--server <url>", "compliify server base URL (default: $COMPLIIFY_SERVER_URL)").option("--dry-run", "show what would be sent; send nothing").action(
+  ).option("--server <url>", `compliify server base URL (default: $COMPLIIFY_SERVER_URL, else ${DEFAULT_SERVER_URL})`).option("--dry-run", "show what would be sent; send nothing").action(
     (opts) => operational(
       () => runPush({
         cwd: process.cwd(),
