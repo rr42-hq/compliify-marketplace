@@ -9,6 +9,9 @@
 // bundle is - and runs it in this process, so argv, stdio, signals and the
 // exit code are exactly those of `node dist/compliify.js`.
 //
+// On Windows this is the file Git Bash runs (by its shebang, which needs LF line
+// endings: see .gitattributes); PowerShell and cmd.exe run compliify.cmd beside it.
+//
 // ESM on purpose: the plugin's package.json says "type": "module", the same
 // marker that lets node load dist/compliify.js.
 import { existsSync, realpathSync } from "node:fs";

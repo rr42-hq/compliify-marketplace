@@ -1,10 +1,10 @@
 {
-  "version": "0.5.0",
+  "version": "0.5.1",
   "files": [
     {
       "path": "dist/compliify.js",
-      "sha256": "a3a5ace8360be7b6a63bb601a70ba09f696eeddf93eb7defe2d75736a38bdc70",
-      "size": 1854631
+      "sha256": "3d194f3cd2d709417fa155f0422881b86b8f1e65852e24e6e217667a1b063400",
+      "size": 1860866
     },
     {
       "path": "package.json",

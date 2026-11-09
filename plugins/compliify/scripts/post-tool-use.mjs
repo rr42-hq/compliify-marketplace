@@ -77,9 +77,19 @@ process.stdin.on("end", () => {
           // raced with another hook, or unwritable: the queue below still works
         }
       }
-      // O_NOFOLLOW: a link in the place of the queue file is an error (caught below), not a write.
+      const queue = join(dir, "pending");
+      // Windows has no O_NOFOLLOW, so a link in the place of the queue file is looked
+      // for explicitly (lstat does not follow it). Not atomic like the flag, but
+      // nothing else races for this file in a repository that was just opened.
+      try {
+        if (lstatSync(queue).isSymbolicLink()) process.exit(0);
+      } catch {
+        // no queue file yet
+      }
+      // O_NOFOLLOW (where it exists): a link in the place of the queue file is an
+      // error (caught below), not a write.
       const fd = openSync(
-        join(dir, "pending"),
+        queue,
         fsConstants.O_WRONLY | fsConstants.O_APPEND | fsConstants.O_CREAT | (fsConstants.O_NOFOLLOW ?? 0),
         0o644,
       );

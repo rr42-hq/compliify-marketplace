@@ -1,0 +1,13 @@
+# Ships inside the plugin: scripts/publish-plugin.mjs copies plugin/ verbatim into
+# the marketplace repo, and Claude Code installs the plugin by cloning that repo
+# with git.
+#
+# Git for Windows converts LF to CRLF on checkout by default (core.autocrlf=true).
+# That would turn the first line of bin/compliify into "#!/usr/bin/env node\r"
+# ("env: 'node\r': No such file or directory" - the launcher Git Bash runs) and
+# change the bytes of dist/compliify.js, which runtime-manifest.json holds a
+# checksum for. A .cmd needs the opposite, CRLF. These attributes win over
+# core.autocrlf.
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.bat text eol=crlf
